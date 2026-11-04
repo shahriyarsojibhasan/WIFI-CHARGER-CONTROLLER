@@ -2,7 +2,19 @@
 
 StorageManager storageMgr;
 
-StorageManager::StorageManager() : _mounted(false) {}
+StorageManager::StorageManager() : _mounted(false), _lastInfoUpdateMs(0) {
+  memset(&_cachedInfo, 0, sizeof(_cachedInfo));
+}
+
+void StorageManager::updateFsInfo() const {
+  if (!_mounted) return;
+  uint32_t now = millis();
+  if (_lastInfoUpdateMs == 0 || (now - _lastInfoUpdateMs >= 30000)) {
+    if (LittleFS.info(_cachedInfo)) {
+      _lastInfoUpdateMs = now;
+    }
+  }
+}
 
 bool StorageManager::begin() {
   if (LittleFS.begin()) {
@@ -39,6 +51,7 @@ bool StorageManager::format() {
   ESP.wdtDisable();
   bool ok = LittleFS.format();
   ESP.wdtFeed();
+  _lastInfoUpdateMs = 0;
   if (ok) {
     _mounted = LittleFS.begin();
     Serial.println(F("[StorageMgr] Filesystem re-formatted."));
@@ -61,6 +74,7 @@ bool StorageManager::writeFile(const char* path, const String& content) {
   if (!f) return false;
   size_t bytes = f.print(content);
   f.close();
+  _lastInfoUpdateMs = 0;
   return (bytes == content.length());
 }
 
@@ -70,6 +84,7 @@ bool StorageManager::appendFile(const char* path, const String& content) {
   if (!f) return false;
   size_t bytes = f.print(content);
   f.close();
+  _lastInfoUpdateMs = 0;
   return (bytes == content.length());
 }
 
@@ -80,29 +95,31 @@ bool StorageManager::exists(const char* path) {
 
 bool StorageManager::remove(const char* path) {
   if (!_mounted) return false;
+  _lastInfoUpdateMs = 0;
   return LittleFS.remove(path);
 }
 
 size_t StorageManager::getTotalBytes() const {
   if (!_mounted) return 0;
-  FSInfo info;
-  return LittleFS.info(info) ? info.totalBytes : 0;
+  updateFsInfo();
+  return _cachedInfo.totalBytes;
 }
 
 size_t StorageManager::getUsedBytes() const {
   if (!_mounted) return 0;
-  FSInfo info;
-  return LittleFS.info(info) ? info.usedBytes : 0;
+  updateFsInfo();
+  return _cachedInfo.usedBytes;
 }
 
 size_t StorageManager::getFreeBytes() const {
   if (!_mounted) return 0;
-  FSInfo info;
-  return LittleFS.info(info) ? (info.totalBytes - info.usedBytes) : 0;
+  updateFsInfo();
+  return (_cachedInfo.totalBytes > _cachedInfo.usedBytes) ? (_cachedInfo.totalBytes - _cachedInfo.usedBytes) : 0;
 }
 
 float StorageManager::getUsagePercent() const {
-  size_t total = getTotalBytes();
-  if (total == 0) return 0.0f;
-  return ((float)getUsedBytes() / (float)total) * 100.0f;
+  if (!_mounted) return 0.0f;
+  updateFsInfo();
+  if (_cachedInfo.totalBytes == 0) return 0.0f;
+  return ((float)_cachedInfo.usedBytes / (float)_cachedInfo.totalBytes) * 100.0f;
 }

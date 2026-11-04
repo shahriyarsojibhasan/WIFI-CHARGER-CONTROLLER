@@ -24,7 +24,11 @@ public:
   bool   isMounted() const { return _mounted; }
 
 private:
+  void updateFsInfo() const;
+
   bool _mounted;
+  mutable FSInfo _cachedInfo;
+  mutable uint32_t _lastInfoUpdateMs;
 };
 
 extern StorageManager storageMgr;
