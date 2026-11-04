@@ -900,8 +900,8 @@ void HttpServer::setupRoutes() {
 
   auto handleWeatherEndpoint = [this]() {
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    if (_server.hasArg("manual_mode")) {
-      String mm = _server.arg("manual_mode");
+    if (_server.hasArg("manual_mode") || _server.hasArg("mode")) {
+      String mm = _server.hasArg("manual_mode") ? _server.arg("manual_mode") : _server.arg("mode");
       if (mm.equalsIgnoreCase("AUTO") || mm.equalsIgnoreCase("CLEAR_OVERRIDE") || mm == "0") {
         weatherMgr.clearManualOverride();
       } else {

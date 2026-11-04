@@ -268,6 +268,7 @@ void ChargingController::tick() {
                               _timerActive ? "TIMER" :
                               (_scheduleSessionActive || _scheduleCompensating) ? "SCHEDULE" :
                               _autoChargingActive ? "AUTO" :
+                              (_state == STATE_WEATHER_BACKUP || _state == STATE_SOLAR) ? "WEATHER_BACKUP" :
                               operatingModeToString((OperatingMode)configMgr.get().chargingMode);
   billingEstimator.tickOneSecond(relayCtrl.isOn(), volts, activeModeStr);
 
@@ -526,6 +527,27 @@ void ChargingController::evaluateStateMachine() {
     }
   }
 
+  // ── RULE 7: SOLAR & WEATHER BOOST MODE (AUTONOMOUS DAYTIME BACKUP) ──
+  // Operates during daytime solar window (09:00 - 16:00) when sky is overcast/rainy/foggy/winter.
+  // Independent of autoMode toggle (works in both Manual standby & Auto mode).
+  bool inSolarWindow = scheduleCtrl.isSolarWindowNow();
+  if (cfg.solarBackupEnabled && inSolarWindow && _weatherCloudy && !_manualChargingActive && !_autoChargingActive && !_timerActive && !_scheduleSessionActive && !_scheduleCompensating && !relayCtrl.isManualLocked()) {
+    if (!isRelayOn && volts < (cfg.highCutVoltage - cfg.hysteresisVoltage) && volts >= minBatteryVolts) {
+      relayCtrl.setRelay(true, false, "SOLAR_CLOUDY_BOOST", rejectErr);
+    }
+    if (relayCtrl.isOn()) {
+      transitionTo(STATE_WEATHER_BACKUP, "Solar Cloudy Daytime Boost Active");
+      return;
+    }
+  } else if (_state == STATE_WEATHER_BACKUP) {
+    // Weather condition cleared or solar window ended: gracefully disengage solar boost relay
+    if (isRelayOn && !_manualChargingActive && !_autoChargingActive && !_timerActive && !_scheduleSessionActive && !_scheduleCompensating) {
+      relayCtrl.setRelay(false, false, "SOLAR_CLOUDY_BOOST_ENDED", rejectErr);
+    }
+    transitionTo(cfg.autoMode ? STATE_READY : STATE_SAFE_OFF, "Solar Cloudy Boost Ended (Sky Clear / Window Expired)");
+    return;
+  }
+
   // ── RULE 8: MANUAL MODE (DEFAULT: SAFE OFF, ONLY USER CONTROLS RELAY) ──
   if (!cfg.autoMode) {
     if (isRelayOn) {
@@ -549,18 +571,6 @@ void ChargingController::evaluateStateMachine() {
       transitionTo(STATE_CHARGING, "Low Battery Auto-Charge Started (Latched until High Cut)");
       Serial.printf("[ChargingCtrl] Low-cut triggered (%.2fV <= %.2fV). Auto-charging latched ON until high-cut (%.2fV).\n",
                     volts, lowTrigger, cfg.highCutVoltage);
-      return;
-    }
-  }
-
-  // ── RULE 10: SOLAR & WEATHER BOOST MODE ──
-  bool inSolarWindow = scheduleCtrl.isSolarWindowNow();
-  if (cfg.solarBackupEnabled && inSolarWindow && _weatherCloudy) {
-    if (!isRelayOn && volts < (cfg.highCutVoltage - cfg.hysteresisVoltage) && volts >= minBatteryVolts) {
-      relayCtrl.setRelay(true, false, "SOLAR_CLOUDY_BOOST", rejectErr);
-    }
-    if (relayCtrl.isOn()) {
-      transitionTo(STATE_WEATHER_BACKUP, "Solar Cloudy Daytime Boost");
       return;
     }
   }

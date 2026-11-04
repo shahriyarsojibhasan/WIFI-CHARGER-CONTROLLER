@@ -241,6 +241,8 @@ void processSerialCommand(const String& line) {
     Serial.println(F("  PROFILE_12V  - Quick switch to Standard 12V Lead-Acid (11.5V - 14.2V)"));
     Serial.println(F("  SET_WIFI <ssid> <password> - Connect to home router"));
     Serial.println(F("  SET_SCHED <sh> <sm> <eh> <em> - Set schedule hours & minutes"));
+    Serial.println(F("  WEATHER      - Print current weather condition & solar boost telemetry"));
+    Serial.println(F("  SET_WEATHER <AUTO|CLEAR|CLOUDY|FOGGY|WINTER|RAIN> - Test weather mode"));
     Serial.println(F("  MODE_LOW     - Direct pin test: D1 = OUTPUT LOW (0V)"));
     Serial.println(F("  MODE_HIGH    - Direct pin test: D1 = OUTPUT HIGH (3.3V)"));
     Serial.println(F("  MODE_INPUT   - Direct pin test: D1 = INPUT (High-Z)"));
@@ -251,7 +253,7 @@ void processSerialCommand(const String& line) {
     Serial.println(F("  REBOOT       - Restart ESP8266"));
   } else if (line.equalsIgnoreCase("STATUS")) {
     const DeviceConfig& cfg = configMgr.get();
-    Serial.printf("[STATUS] %s | Profile=%s (Cut=%.2f-%.2fV) | Batt=%.2fV | Mismatch=%s | Disconnected=%s | State=%s | Relay=%s(D1=%d) | Polarity=%s | WiFi=%s(IP=%s) | Sched=%s(%02d:%02d-%02d:%02d,InWin=%s)\n",
+    Serial.printf("[STATUS] %s | Profile=%s (Cut=%.2f-%.2fV) | Batt=%.2fV | Mismatch=%s | Disconnected=%s | State=%s | Relay=%s(D1=%d) | Polarity=%s | WiFi=%s(IP=%s) | Sched=%s(%02d:%02d-%02d:%02d,InWin=%s) | Weather=%s(Cloud=%d%%,Code=%d,Cloudy=%s,Manual=%s,SolarWin=%s)\n",
                   timeMgr.getFormattedTime12().c_str(),
                   batteryProfileToString((BatteryProfileType)cfg.batteryProfile),
                   cfg.lowCutVoltage, cfg.highCutVoltage,
@@ -267,7 +269,13 @@ void processSerialCommand(const String& line) {
                   cfg.scheduleEnabled ? "ENABLED" : "DISABLED",
                   cfg.chargeStartHour, cfg.chargeStartMinute,
                   cfg.chargeStopHour, cfg.chargeStopMinute,
-                  scheduleCtrl.isScheduleActiveNow() ? "YES" : "NO");
+                  scheduleCtrl.isScheduleActiveNow() ? "YES" : "NO",
+                  weatherMgr.getWeatherStatusString(),
+                  weatherMgr.getCloudCover(),
+                  weatherMgr.getWeatherCode(),
+                  weatherMgr.isCloudy() ? "YES" : "NO",
+                  weatherMgr.isManualOverrideActive() ? "YES" : "NO",
+                  scheduleCtrl.isSolarWindowNow() ? "YES" : "NO");
   } else if (line.startsWith("SET_WIFI") || line.startsWith("set_wifi")) {
     char ssid[64] = {0};
     char pass[64] = {0};
@@ -367,6 +375,36 @@ void processSerialCommand(const String& line) {
     configMgr.save();
     relayCtrl.reapplyHardware();
     Serial.println(F("[SerialCmd] Config saved: relayActiveLow = false (Active-HIGH: 3.3V=ON, 0V=OFF)"));
+  } else if (line.equalsIgnoreCase("WEATHER")) {
+    const DeviceConfig& cfg = configMgr.get();
+    Serial.printf("[WEATHER] Status: %s | Cloud: %d%% | Code: %d | Temp: %.1fC | CloudySignal: %s | Manual: %s | SolarBackup: %s | SolarWindow: %s | Lat: %.4f, Lon: %.4f\n",
+                  weatherMgr.getWeatherStatusString(),
+                  weatherMgr.getCloudCover(),
+                  weatherMgr.getWeatherCode(),
+                  weatherMgr.getTemperature(),
+                  weatherMgr.isCloudy() ? "YES" : "NO",
+                  weatherMgr.isManualOverrideActive() ? "YES" : "NO",
+                  cfg.solarBackupEnabled ? "ENABLED" : "DISABLED",
+                  scheduleCtrl.isSolarWindowNow() ? "YES" : "NO",
+                  cfg.weatherLat, cfg.weatherLon);
+  } else if (line.startsWith("SET_WEATHER") || line.startsWith("set_weather")) {
+    String m = line.substring(11);
+    m.trim();
+    if (m.equalsIgnoreCase("AUTO") || m.equalsIgnoreCase("0") || m.equalsIgnoreCase("CLEAR_OVERRIDE")) {
+      weatherMgr.clearManualOverride();
+      Serial.println(F("[SerialCmd] Weather mode set to AUTO (Open-Meteo API)."));
+    } else if (m.length() > 0) {
+      WeatherStatus ws = weatherStatusFromString(m);
+      if (ws != WEATHER_UNKNOWN) {
+        weatherMgr.setManualWeatherMode(ws);
+        Serial.printf("[SerialCmd] Weather manual override set to: %s (CloudySignal: %s)\n",
+                      weatherStatusToString(ws), weatherMgr.isCloudy() ? "YES" : "NO");
+      } else {
+        Serial.println(F("[SerialCmd] Unknown weather mode. Options: AUTO, CLEAR, CLOUDY, FOGGY, WINTER, RAIN"));
+      }
+    } else {
+      Serial.println(F("[SerialCmd] Usage: SET_WEATHER <AUTO|CLEAR|CLOUDY|FOGGY|WINTER|RAIN>"));
+    }
   } else if (line.equalsIgnoreCase("REBOOT")) {
     Serial.println(F("[SerialCmd] Rebooting ESP8266..."));
     ESP.restart();

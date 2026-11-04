@@ -145,20 +145,24 @@ void WeatherManager::fetchWeather(bool force) {
     yield();
     if (httpCode == HTTP_CODE_OK) {
       String payload = http.getString();
-      int ccIdx = payload.indexOf("\"cloud_cover\":");
+      // Skip "current_units" block to ensure we extract the actual numeric values from the "current" object
+      int curIdx = payload.indexOf("\"current\":");
+      String curBlock = (curIdx != -1) ? payload.substring(curIdx) : payload;
+
+      int ccIdx = curBlock.indexOf("\"cloud_cover\":");
       if (ccIdx != -1) {
-        _cloudCover = payload.substring(ccIdx + 14).toInt();
+        _cloudCover = curBlock.substring(ccIdx + 14).toInt();
       }
-      int wcIdx = payload.indexOf("\"weather_code\":");
+      int wcIdx = curBlock.indexOf("\"weather_code\":");
       if (wcIdx != -1) {
-        _weatherCode = payload.substring(wcIdx + 15).toInt();
+        _weatherCode = curBlock.substring(wcIdx + 15).toInt();
       }
-      int tempIdx = payload.indexOf("\"temperature_2m\":");
+      int tempIdx = curBlock.indexOf("\"temperature_2m\":");
       if (tempIdx != -1) {
-        _temperature = payload.substring(tempIdx + 17).toFloat();
+        _temperature = curBlock.substring(tempIdx + 17).toFloat();
       }
 
-      if (ccIdx != -1 || wcIdx != -1) {
+      if (curIdx != -1 && (ccIdx != -1 || wcIdx != -1)) {
         // WMO weather code classification:
         // 0-1: Clear, 2-3: Partly cloudy/overcast, 45-48: Fog,
         // 51-67: Drizzle/Rain, 71-77: Snow, 80-82: Showers, 95-99: Thunderstorm
