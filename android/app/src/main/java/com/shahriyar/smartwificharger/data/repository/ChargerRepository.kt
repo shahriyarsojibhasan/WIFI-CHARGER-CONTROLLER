@@ -231,30 +231,8 @@ class ChargerRepository(
             else -> false
         }
 
-        // Record connection history telemetry
-        database.connectionHistoryDao().insertHistory(
-            ConnectionHistoryEntity(
-                deviceId = deviceId,
-                connectionMode = currentMode.name,
-                endpoint = activeUrl ?: "NONE",
-                latencyMs = connectionManager.latencyMs.value,
-                success = fetchedFromServer
-            )
-        )
-
-        // Record telemetry sample to Room
-        if (fetchedFromServer) {
-            database.telemetryDao().insertTelemetry(
-                TelemetryEntity(
-                    deviceId = deviceId,
-                    timestamp = System.currentTimeMillis(),
-                    voltage = cachedTelemetry.batteryVoltage,
-                    relayState = cachedTelemetry.relayState,
-                    chargingState = cachedTelemetry.chargingState,
-                    rssi = cachedTelemetry.wifiRssi
-                )
-            )
-        }
+        // Strictly real-time operation: Telemetry & connection samples are kept purely in-memory
+        // to avoid local storage clutter. Only billing records are permanently stored in Room.
 
         // Trigger background offline session sync
         try {
@@ -548,24 +526,8 @@ class ChargerRepository(
                 lastSeen = System.currentTimeMillis()
             )
         )
-        database.deviceStateDao().insertOrUpdate(
-            DeviceStateEntity(
-                deviceId = deviceId,
-                batteryVoltage = cachedTelemetry.batteryVoltage,
-                relayState = cachedTelemetry.relayState,
-                chargingMode = cachedTelemetry.chargingMode.name,
-                isCharging = cachedTelemetry.relayState,
-                sensorStatus = cachedTelemetry.sensorStatus.name,
-                wifiRssi = cachedTelemetry.wifiRssi,
-                uptimeSecs = cachedTelemetry.uptimeSecs,
-                timerActive = cachedTelemetry.timerActive,
-                timerRemainingSeconds = cachedTelemetry.timerRemainingSeconds,
-                scheduleCompensating = cachedTelemetry.scheduleCompensating,
-                scheduleRemainingSeconds = cachedTelemetry.scheduleRemainingSeconds,
-                manualLockSecs = cachedTelemetry.manualLockSecs,
-                updatedAt = System.currentTimeMillis()
-            )
-        )
+        // Device operational state is strictly live/realtime from firmware.
+        // No offline state snapshot is persisted to ensure zero state divergence.
         database.chargerConfigDao().insertOrUpdate(
             ChargerConfigEntity(
                 deviceId = deviceId,
