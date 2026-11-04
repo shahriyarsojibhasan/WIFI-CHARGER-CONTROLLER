@@ -26,7 +26,7 @@ void WiFiManager::begin() {
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
   WiFi.setSleepMode(WIFI_NONE_SLEEP); // Never power-down radio
-  WiFi.setOutputPower(17.5f);
+  WiFi.setOutputPower(20.5f);
 
   const DeviceConfig& cfg = configMgr.get();
   bool hasWifi = (strlen(cfg.wifiSsid) > 0);
@@ -35,6 +35,7 @@ void WiFiManager::begin() {
     // ── STA Mode: Connect to saved router ─────────────────────────────────
     Serial.printf("[WiFiMgr] STA: Connecting to '%s'...\n", cfg.wifiSsid);
     WiFi.mode(WIFI_STA);
+    WiFi.config(0U, 0U, 0U); // Fresh DHCP: release any cached static IP so router assigns valid IP
 
     // Parse saved BSSID string → uint8_t[6] for directed probe
     // Critical for hidden SSIDs: directed probe = instant connect <1.5s!
@@ -61,14 +62,15 @@ void WiFiManager::begin() {
       WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
     }
 
-    // Wait up to 14 seconds (hidden networks need active directed probes)
+    // Wait up to 5.5 seconds (if router is off, start fallback SoftAP quickly)
     unsigned long start = millis();
     bool channelFallbackDone = false;
-    while (WiFi.status() != WL_CONNECTED && (millis() - start < 14000)) {
-      delay(250);
+    while (WiFi.status() != WL_CONNECTED && (millis() - start < 5500)) {
+      delay(100);
+      ESP.wdtFeed();
       yield();
-      // After 5s without connection, try full 13-channel broadcast scan
-      if (!channelFallbackDone && (millis() - start >= 5000)) {
+      // After 2.5s without connection, try full 13-channel broadcast scan
+      if (!channelFallbackDone && (millis() - start >= 2500)) {
         channelFallbackDone = true;
         Serial.println(F("[WiFiMgr] Channel probe expired. Full 13-ch active scan..."));
         WiFi.begin(cfg.wifiSsid, cfg.wifiPass);
@@ -281,6 +283,7 @@ void WiFiManager::loop() {
     if (now - _lastAttemptTime >= 15000UL) {
       _lastAttemptTime = now;
       _failedAttempts++;
+      WiFi.config(0U, 0U, 0U); // Fresh DHCP
 
       uint8_t bssid[6] = {0};
       bool hasBssid = false;
