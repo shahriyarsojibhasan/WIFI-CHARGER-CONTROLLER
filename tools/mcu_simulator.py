@@ -57,11 +57,11 @@ class VirtualMcuState:
         self.electricity_rate = 10.0  # BDT per kWh
 
         # Charging Engine & Battery Profiles
-        self.battery_profile = "LEAD_ACID_12V"
-        self.battery_profile_id = 0
-        self.low_cut_voltage = 11.50
-        self.high_cut_voltage = 14.20
-        self.hysteresis_voltage = 0.30
+        self.battery_profile = "LEAD_ACID_CONSERVATIVE"
+        self.battery_profile_id = 1
+        self.low_cut_voltage = 11.00
+        self.high_cut_voltage = 12.80
+        self.hysteresis_voltage = 0.25
         self.auto_mode = True
         self.auto_charging_active = False
         self.high_cut_sustain_count = 0
@@ -75,11 +75,11 @@ class VirtualMcuState:
         self.saved_timer_remaining = 0  # for power cut recovery
 
         # Schedule
-        self.schedule_enabled = False
+        self.schedule_enabled = True
         self.schedule_days = 127
-        self.charge_start_hour = 1
+        self.charge_start_hour = 2
         self.charge_start_min = 0
-        self.charge_stop_hour = 3
+        self.charge_stop_hour = 4
         self.charge_stop_min = 0
         self.schedule_session_active = False
         self.schedule_compensating = False

@@ -25,10 +25,10 @@ void ConfigManager::setDefaults() {
   strncpy(_config.apPass, DEFAULT_AP_PASS, sizeof(_config.apPass) - 1);
   _config.apEnabled           = true;
 
-  _config.batteryProfile      = PROFILE_5V;
-  _config.lowCutVoltage       = 4.2f;
-  _config.highCutVoltage      = 5.5f;
-  _config.hysteresisVoltage   = 0.15f;
+  _config.batteryProfile      = PROFILE_LEAD_ACID_CONSERVATIVE;
+  _config.lowCutVoltage       = 11.0f;
+  _config.highCutVoltage      = 12.8f;
+  _config.hysteresisVoltage   = 0.25f;
   _config.minOnTimeSecs       = 15;
   _config.minOffTimeSecs      = 15;
 
@@ -40,11 +40,11 @@ void ConfigManager::setDefaults() {
   _config.autoMode            = true;
   _config.solarBackupEnabled  = true;
 
-  _config.scheduleEnabled     = false;
+  _config.scheduleEnabled     = true;
   _config.scheduleDaysBitmask = 127; // Default all 7 days (everyday)
-  _config.chargeStartHour     = 3; // 03:00 AM
+  _config.chargeStartHour     = 2; // 02:00 AM (2 AM)
   _config.chargeStartMinute   = 0;
-  _config.chargeStopHour      = 4; // 04:00 AM
+  _config.chargeStopHour      = 4; // 04:00 AM (4 AM)
   _config.chargeStopMinute    = 0;
   _config.timezoneOffsetHours = 6; // UTC+6 (Dhaka)
 

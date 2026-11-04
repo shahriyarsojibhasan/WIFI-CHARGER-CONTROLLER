@@ -214,11 +214,11 @@ class AppPreferences(context: Context) {
         const val DEFAULT_DEVICE_ID       = "wifi_charger_01"
         const val DEFAULT_EST_CURRENT     = 1.7f
         const val DEFAULT_KWH_RATE        = 10.0f
-        const val DEFAULT_LOW_CUT         = 4.2f
-        const val DEFAULT_HIGH_CUT        = 5.5f
-        const val DEFAULT_HYSTERESIS      = 0.15f
-        const val DEFAULT_BATTERY_PROFILE = "5V"
-        const val DEFAULT_SCHEDULE_ENABLED = false
+        const val DEFAULT_LOW_CUT         = 11.0f
+        const val DEFAULT_HIGH_CUT        = 12.8f
+        const val DEFAULT_HYSTERESIS      = 0.25f
+        const val DEFAULT_BATTERY_PROFILE = "LEAD_ACID_CONSERVATIVE"
+        const val DEFAULT_SCHEDULE_ENABLED = true
         const val DEFAULT_START_HOUR      = 0
         const val DEFAULT_START_MINUTE    = 0
         const val DEFAULT_STOP_HOUR       = 6

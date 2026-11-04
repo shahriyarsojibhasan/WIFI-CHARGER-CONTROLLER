@@ -112,21 +112,21 @@ data class BillingStats(
 )
 
 data class ChargerConfig(
-    val batteryProfile: String = "5V",
-    val lowCut: Float = 4.2f,
-    val highCut: Float = 5.5f,
-    val hysteresis: Float = 0.15f,
+    val batteryProfile: String = "LEAD_ACID_CONSERVATIVE",
+    val lowCut: Float = 11.0f,
+    val highCut: Float = 12.8f,
+    val hysteresis: Float = 0.25f,
     val chargerWatt: Float = 100.0f,
     val chargerAmps: Float = 1.7f,
     val kwhRateBdt: Float = 10.0f,
     val voltageCalibration: Float = 1.000f,
     val voltageCalibrationOffset: Float = 0.0f,
     val voltageCalibrationFactor: Float = 1.000f,
-    val chargeStartHour: Int = 3,
+    val chargeStartHour: Int = 2,
     val chargeStartMinute: Int = 0,
     val chargeStopHour: Int = 4,
     val chargeStopMinute: Int = 0,
-    val scheduleEnabled: Boolean = false,
+    val scheduleEnabled: Boolean = true,
     val scheduleDaysBitmask: Int = 127, // Bits 0-6: Sun-Sat (127 = all 7 days)
     val autoModeEnabled: Boolean = true,
     val solarBackupEnabled: Boolean = true,

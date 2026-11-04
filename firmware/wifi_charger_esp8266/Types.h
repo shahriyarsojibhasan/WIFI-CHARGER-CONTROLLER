@@ -190,7 +190,7 @@ inline const char* batteryProfileToString(BatteryProfileType p) {
     case PROFILE_6V:                     return "6V";
     case PROFILE_5V:                     return "5V";
     case PROFILE_CUSTOM:                 return "CUSTOM";
-    default:                             return "LEAD_ACID_12V";
+    default:                             return "LEAD_ACID_CONSERVATIVE";
   }
 }
 
@@ -198,7 +198,7 @@ inline BatteryProfileType batteryProfileFromString(const String& str) {
   String s = str;
   s.toUpperCase();
   s.trim();
-  if (s == "LEAD_ACID_12V" || s == "LEAD_ACID" || s == "LEAD_ACID_STANDARD" || s == "0" || s == "12V") return PROFILE_LEAD_ACID_12V;
+  if (s == "LEAD_ACID_12V" || s == "LEAD_ACID" || s == "LEAD_ACID_STANDARD" || s == "0" || s == "12V") return PROFILE_LEAD_ACID_CONSERVATIVE;
   if (s == "LEAD_ACID_CONSERVATIVE" || s == "LEAD_ACID_USER" || s == "12V_11_12.8" || s == "1") return PROFILE_LEAD_ACID_CONSERVATIVE;
   if (s == "AGM_12V" || s == "AGM" || s == "POWER_12V" || s == "2") return PROFILE_AGM_12V;
   if (s == "GEL_12V" || s == "GEL" || s == "3")                     return PROFILE_GEL_12V;
@@ -208,7 +208,7 @@ inline BatteryProfileType batteryProfileFromString(const String& str) {
   if (s == "6V" || s == "SYSTEM_6V" || s == "7")                    return PROFILE_6V;
   if (s == "5V" || s == "SYSTEM_5V" || s == "8")                    return PROFILE_5V;
   if (s == "CUSTOM" || s == "9")                                     return PROFILE_CUSTOM;
-  return PROFILE_LEAD_ACID_12V;
+  return PROFILE_LEAD_ACID_CONSERVATIVE;
 }
 
 // ====================================================================================================
@@ -258,9 +258,9 @@ struct DeviceConfig {
 
   // Battery & Cutoff Profile
   uint8_t  batteryProfile; // BatteryProfileType
-  float    lowCutVoltage;      // Default 11.5V
-  float    highCutVoltage;     // Default 14.2V
-  float    hysteresisVoltage;  // Default 0.3V
+  float    lowCutVoltage;      // Default 11.0V
+  float    highCutVoltage;     // Default 12.8V
+  float    hysteresisVoltage;  // Default 0.25V
   uint32_t minOnTimeSecs;      // Anti-chatter min ON (e.g. 15s)
   uint32_t minOffTimeSecs;     // Anti-chatter min OFF (e.g. 15s)
 
@@ -277,7 +277,7 @@ struct DeviceConfig {
   // Schedules
   bool     scheduleEnabled;
   uint8_t  scheduleDaysBitmask; // Bits 0-6: Sun(0), Mon(1), Tue(2), Wed(3), Thu(4), Fri(5), Sat(6). Default 0x7F (All 7 days)
-  int      chargeStartHour;    // 0-23 (default 3)
+  int      chargeStartHour;    // 0-23 (default 2)
   int      chargeStartMinute;  // 0-59 (default 0)
   int      chargeStopHour;     // 0-23 (default 4)
   int      chargeStopMinute;   // 0-59 (default 0)

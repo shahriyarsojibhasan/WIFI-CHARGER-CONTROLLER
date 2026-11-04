@@ -74,7 +74,7 @@ class ChargerRepository(
     private var cachedTelemetry = ChargerTelemetry()
     private var cachedBilling = BillingStats()
     private var cachedConfig = ChargerConfig(
-        batteryProfile = prefs.batteryProfile.ifBlank { "5V" },
+        batteryProfile = prefs.batteryProfile.ifBlank { "LEAD_ACID_CONSERVATIVE" },
         lowCut = prefs.lowCutVoltage,
         highCut = prefs.highCutVoltage,
         hysteresis = prefs.hysteresisVoltage,
