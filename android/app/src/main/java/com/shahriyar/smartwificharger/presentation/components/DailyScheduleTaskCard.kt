@@ -96,7 +96,8 @@ fun DailyScheduleTaskCard(
     val isCompensating = (scheduleCompensating || scheduleTodayStatus == "COMPENSATING") && !isCompleted
     val isInProgress = scheduleTodayStatus == "IN_PROGRESS" && !isCompleted
     val isPending = scheduleTodayStatus == "PENDING" && !isCompleted
-    val isDisabled = scheduleTodayStatus == "DISABLED" || scheduleTodayStatus == "NOT_SCHEDULED_TODAY"
+    val isDisabled = scheduleTodayStatus == "DISABLED"
+    val isNotToday = scheduleTodayStatus == "NOT_SCHEDULED_TODAY"
 
     val statusColor = when {
         !isMcuOnline -> TextMuted
@@ -211,6 +212,7 @@ fun DailyScheduleTaskCard(
                                 isCompensating -> if (isBn) "পাওয়ার রিকভারি" else "RECOVERY ACTIVE"
                                 isInProgress -> if (isBn) "চার্জিং চলমান" else "IN PROGRESS"
                                 isPending -> if (isBn) "অপেক্ষমান" else "PENDING"
+                                isNotToday -> if (isBn) "আজ শিডিউল নেই" else "NOT TODAY"
                                 else -> if (isBn) "নিষ্ক্রিয়" else "INACTIVE"
                             },
                             fontSize = 11.sp,

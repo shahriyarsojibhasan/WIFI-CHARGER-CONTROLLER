@@ -123,7 +123,8 @@ void BillingEstimator::checkDayRollOver() {
     if (_lastSavedDay != 0 && _lastSavedDay != tmInfo.tm_mday) {
       // Midnight crossed: record yesterday's bill to 30-day rolling history
       uint32_t currentEpoch = timeMgr.getEpoch();
-      uint32_t yesterdayEpoch = (currentEpoch > 86400) ? (currentEpoch - 3600) : 0;
+      uint32_t secsToday = tmInfo.tm_hour * 3600 + tmInfo.tm_min * 60 + tmInfo.tm_sec;
+      uint32_t yesterdayEpoch = (currentEpoch > (secsToday + 43200)) ? (currentEpoch - secsToday - 43200) : ((currentEpoch > 86400) ? currentEpoch - 86400 : 0);
       recordDailyBill(
         yesterdayEpoch,
         _todaySeconds,
@@ -259,7 +260,7 @@ void BillingEstimator::tickOneSecond(bool isCharging, float currentVoltage, cons
     else _autoSeconds++;
 
     static unsigned long lastMetricsSave = 0;
-    if (millis() - lastMetricsSave >= 60000UL) {
+    if (millis() - lastMetricsSave >= 1800000UL) {
       lastMetricsSave = millis();
       saveSessionsToStorage();
     }

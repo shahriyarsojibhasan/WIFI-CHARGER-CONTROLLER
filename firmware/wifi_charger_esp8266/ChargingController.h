@@ -61,6 +61,7 @@ private:
   bool _timerActive;
   uint32_t _timerRemainingSeconds;
   uint32_t _lastTimerPersistSec;
+  unsigned long _lastTimerExpiredTime;
 
   bool _scheduleSessionActive;
   bool _scheduleCompensating;

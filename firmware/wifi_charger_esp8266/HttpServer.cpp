@@ -1594,6 +1594,9 @@ void HttpServer::handleScanWifi() {
   }
   json += "]";
   WiFi.scanDelete();
+  if (apMgr.isActive()) {
+    wifi_set_channel(apMgr.getChannel());
+  }
   _server.sendHeader("Access-Control-Allow-Origin", "*");
   _server.send(200, "application/json", json);
 }
@@ -1620,8 +1623,14 @@ void HttpServer::handleSaveCredentials() {
   }
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
-  _server.send(200, "text/plain", "Credentials saved. Device restarting into Controller mode...");
-  delay(300);
+  _server.sendHeader("Connection", "close");
+  _server.send(200, "application/json", "{\"success\":true,\"message\":\"Credentials saved. Connecting...\"}");
+  unsigned long flushStart = millis();
+  while (millis() - flushStart < 600) {
+    _server.handleClient();
+    delay(10);
+    yield();
+  }
   wifiMgr.connectNew(s.c_str(), p.c_str());
 }
 
@@ -1634,8 +1643,14 @@ void HttpServer::handleNotFound() {
     _server.send(204);
     return;
   }
+  String uri = _server.uri();
+  if (uri == "/favicon.ico" || uri.startsWith("/generate_204") || uri.startsWith("/api/")) {
+    _server.sendHeader("Access-Control-Allow-Origin", "*");
+    _server.send(404, "text/plain", "Not Found");
+    return;
+  }
   bool isApClient = (_server.client().remoteIP()[2] == 4 || apMgr.isSetupMode());
-  if (isApClient && !_server.uri().startsWith("/api/")) {
+  if (isApClient) {
     _server.sendHeader("Access-Control-Allow-Origin", "*");
     _server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
     _server.send(302, "text/plain", "Captive Portal Redirect");

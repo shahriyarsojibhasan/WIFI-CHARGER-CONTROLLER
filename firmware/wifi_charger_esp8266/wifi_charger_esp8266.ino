@@ -408,24 +408,7 @@ void loop() {
   // Feed Hardware Watchdog
   watchdogMgr.feed();
 
-  // Hardware FLASH Button (GPIO0) - 3-second hold to trigger runtime Factory Reset & LittleFS Format
-  static unsigned long flashBtnPressTime = 0;
-  if (digitalRead(PIN_FLASH_BTN) == LOW) {
-    if (flashBtnPressTime == 0) {
-      flashBtnPressTime = millis();
-    } else if (millis() - flashBtnPressTime >= 3000) {
-      Serial.println(F("[HARDWARE] FLASH button held 3s! Executing Factory Reset & LittleFS Format..."));
-      for (int i = 0; i < 10; i++) {
-        digitalWrite(STATUS_LED, LOW);
-        delay(50);
-        digitalWrite(STATUS_LED, HIGH);
-        delay(50);
-      }
-      configMgr.factoryReset();
-    }
-  } else {
-    flashBtnPressTime = 0;
-  }
+  // Note: FLASH button factory reset disabled during runtime to avoid accidental DTR serial reset
 
   // Serial Terminal Diagnostics & Hardware Control
   handleSerialCommands();

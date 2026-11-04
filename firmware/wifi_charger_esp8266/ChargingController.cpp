@@ -38,8 +38,7 @@ void ChargingController::begin() {
   transitionTo(STATE_BOOT, "System Startup");
 
   // Step 1: Load Configuration FIRST so relay polarity (relayActiveLow) is known
-  transitionTo(STATE_INITIALIZING, "Loading Configuration");
-  configMgr.begin();
+  transitionTo(STATE_INITIALIZING, "Verifying Configuration");
 
   // Reset Latches on Boot (Safety: Charger is SAFE OFF by default)
   _emergencyStop = false;
@@ -146,6 +145,7 @@ void ChargingController::cancelTimer() {
   _timerRemainingSeconds = 0;
   _lastTimerPersistSec = 0;
   clearTimerState();
+  _lastTimerExpiredTime = millis();
   relayCtrl.forceOff("TIMER_CANCELLED");
 }
 
@@ -207,7 +207,7 @@ void ChargingController::tick() {
     if (_timerRemainingSeconds > 0) {
       _timerRemainingSeconds--;
       // Persist to LittleFS every 10 seconds so electricity cut won't lose progress!
-      if (_lastTimerPersistSec == 0 || (_lastTimerPersistSec - _timerRemainingSeconds >= 10)) {
+      if (_lastTimerPersistSec == 0 || (_lastTimerPersistSec - _timerRemainingSeconds >= 300)) {
         _lastTimerPersistSec = _timerRemainingSeconds;
         saveTimerState();
       }
@@ -215,6 +215,7 @@ void ChargingController::tick() {
       _timerActive = false;
       _lastTimerPersistSec = 0;
       clearTimerState();
+      _lastTimerExpiredTime = millis();
       relayCtrl.forceOff("TIMER_EXPIRED");
       Serial.println(F("[ChargingCtrl] Countdown timer reached 0 -> Relay OFF"));
     }
@@ -226,7 +227,7 @@ void ChargingController::tick() {
       _scheduleRemainingSeconds--;
       _dailyScheduleChargedSecs++;
       // Persist to LittleFS every 10 seconds so electricity cut won't lose remaining duration!
-      if (_lastSchedulePersistSec == 0 || (_lastSchedulePersistSec - _scheduleRemainingSeconds >= 10)) {
+      if (_lastSchedulePersistSec == 0 || (_lastSchedulePersistSec - _scheduleRemainingSeconds >= 300)) {
         _lastSchedulePersistSec = _scheduleRemainingSeconds;
         saveScheduleState();
       }
@@ -537,7 +538,8 @@ void ChargingController::evaluateStateMachine() {
 
   // ── RULE 9: LOW BATTERY AUTO-CHARGE TRIGGER (AUTO MODE) ──
   // Triggers auto-charge when battery touches low-cut or is within 0.10V of low-cut!
-  if (cfg.autoMode && !_autoChargingActive && !_manualChargingActive && !_timerActive && !relayCtrl.isManualLocked()) {
+  bool inTimerCooldown = (_lastTimerExpiredTime != 0 && (millis() - _lastTimerExpiredTime < 600000UL));
+  if (cfg.autoMode && !_autoChargingActive && !_manualChargingActive && !_timerActive && !inTimerCooldown && !relayCtrl.isManualLocked()) {
     float lowTrigger = cfg.lowCutVoltage + 0.10f; // Triggers when touching or near low-cut!
     if (volts <= lowTrigger && volts >= minBatteryVolts && !voltageSensor.isDisconnected()) {
       _autoChargingActive = true;

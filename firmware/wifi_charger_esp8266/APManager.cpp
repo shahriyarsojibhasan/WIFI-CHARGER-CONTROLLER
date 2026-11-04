@@ -32,21 +32,43 @@ void APManager::begin(int channel) {
   if (channel < 1 || channel > 13) channel = 1;
   _channel = channel;
 
-  // 1. Radio Mode: WIFI_AP_STA so SoftAP is rock solid and STA can scan nearby Wi-Fi
-  WiFi.mode(WIFI_AP_STA);
-  delay(50);
+  // 1. Radio Mode: Pure WIFI_AP in Setup mode (no routing conflicts) or WIFI_AP_STA
+  WiFi.mode(isSetup ? WIFI_AP : WIFI_AP_STA);
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(false, false);
+  delay(30);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setOutputPower(20.5f);
 
-  // 2. Start SoftAP cleanly
-  // ESP8266 Arduino core natively sets IP 192.168.4.1, Subnet 255.255.255.0,
-  // and starts the built-in DHCP server leasing 192.168.4.2 to 192.168.4.100.
+  // 2. Explicit SoftAP IP Configuration (192.168.4.1) BEFORE softAP() starts
+  IPAddress apIP(192, 168, 4, 1);
+  IPAddress netMsk(255, 255, 255, 0);
+  wifi_softap_dhcps_stop();
+  WiFi.softAPConfig(apIP, apIP, netMsk);
+
+  // 3. Start SoftAP hardware with SSID, password, channel
   bool ok = false;
   if (isSetup || pass == nullptr || strlen(pass) < 8) {
-    ok = WiFi.softAP(ssid);
+    ok = WiFi.softAP(ssid, nullptr, _channel, 0, 4);
   } else {
-    ok = WiFi.softAP(ssid, pass);
+    ok = WiFi.softAP(ssid, pass, _channel, 0, 4);
   }
   _apActive = ok;
+
+  // 4. Configure DHCP lease pool and mandatory Option 3 (Router) & Option 6 (DNS) for Android
+  wifi_softap_dhcps_stop();
+  struct dhcps_lease lease;
+  lease.enable = true;
+  lease.start_ip.addr = IPAddress(192, 168, 4, 2).v4();
+  lease.end_ip.addr   = IPAddress(192, 168, 4, 100).v4();
+
+  auto& dhcp = WiFi.softAPDhcpServer();
+  dhcp.set_dhcps_lease(&lease);
+  dhcp.setRouter(true);
+  ip4_addr_t dnsAddr;
+  dnsAddr.addr = static_cast<uint32_t>(apIP);
+  dhcp.setDns(dnsAddr);
+  wifi_softap_dhcps_start();
 
   // 6. Connection event handlers for diagnostics
   onStationConnectedHandler = WiFi.onSoftAPModeStationConnected(

@@ -37,7 +37,7 @@ void FirebaseManager::begin() {
   _lastPollTime = 0;
   _lastFullSyncTime = 0;
   _wifiClient.setInsecure();
-  _wifiClient.setBufferSizes(2048, 1536); // Pre-allocate 2048 bytes RX, 1536 bytes TX
+  _wifiClient.setBufferSizes(1024, 512); // Pre-allocate 2048 bytes RX, 1536 bytes TX
   _wifiClient.setTimeout(4000);
   _httpClient.setTimeout(4000);
   _httpClient.setReuse(false);
