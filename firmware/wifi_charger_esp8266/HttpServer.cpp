@@ -463,11 +463,26 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const wEl = document.getElementById('ui-weather');
         if (wEl) {
           if (t.cloud_cover !== undefined && t.cloud_cover >= 0) {
+            const ws = (t.weather_status || '').toUpperCase();
             let isCld = t.solar_cloudy || t.weather_cloudy || t.cloud_cover > 60;
-            let wTxt = isCld ? (isBangla ? 'মেঘলা (' + t.cloud_cover + '%) 🌧' : 'Cloudy (' + t.cloud_cover + '%) 🌧')
-                             : (isBangla ? 'রৌদ্রোজ্জ্বল (' + t.cloud_cover + '%) ☀️' : 'Sunny (' + t.cloud_cover + '%) ☀️');
+            let wTxt = '';
+            if (ws.includes('FOG')) {
+              wTxt = isBangla ? 'কুয়াশাচ্ছন্ন (' + t.cloud_cover + '%) 🌫️' : 'Foggy (' + t.cloud_cover + '%) 🌫️';
+              wEl.style.color = '#38BDF8';
+            } else if (ws.includes('WINTER')) {
+              wTxt = isBangla ? 'শীতকালীন আকাশ (' + t.cloud_cover + '%) ❄️' : 'Winter Sky (' + t.cloud_cover + '%) ❄️';
+              wEl.style.color = '#38BDF8';
+            } else if (ws.includes('RAIN')) {
+              wTxt = isBangla ? 'বৃষ্টিপাত (' + t.cloud_cover + '%) 🌧️' : 'Rainy (' + t.cloud_cover + '%) 🌧️';
+              wEl.style.color = 'var(--amber)';
+            } else if (isCld) {
+              wTxt = isBangla ? 'মেঘলা (' + t.cloud_cover + '%) ☁️' : 'Cloudy (' + t.cloud_cover + '%) ☁️';
+              wEl.style.color = 'var(--amber)';
+            } else {
+              wTxt = isBangla ? 'রৌদ্রোজ্জ্বল (' + t.cloud_cover + '%) ☀️' : 'Sunny (' + t.cloud_cover + '%) ☀️';
+              wEl.style.color = 'var(--green)';
+            }
             wEl.innerText = wTxt;
-            wEl.style.color = isCld ? 'var(--amber)' : 'var(--green)';
           } else {
             wEl.innerText = isBangla ? 'অপেক্ষমান' : 'Standby';
           }
