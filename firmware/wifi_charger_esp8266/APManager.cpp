@@ -32,8 +32,9 @@ void APManager::begin(int channel) {
   if (channel < 1 || channel > 13) channel = 1;
   _channel = channel;
 
-  // 1. Radio Mode: Pure WIFI_AP in Setup mode (no routing conflicts) or WIFI_AP_STA
-  WiFi.mode(isSetup ? WIFI_AP : WIFI_AP_STA);
+  // 1. Radio Mode: WIFI_AP_STA enables Station receiver for Wi-Fi scanning while hosting SoftAP.
+  // setAutoReconnect(false) prevents any background channel hopping.
+  WiFi.mode(WIFI_AP_STA);
   WiFi.setAutoReconnect(false);
   WiFi.disconnect(false, false);
   delay(30);

@@ -1,18 +1,19 @@
 #include "HttpServer.h"
-#include "ConfigManager.h"
-#include "ChargingController.h"
-#include "RelayController.h"
-#include "VoltageSensor.h"
-#include "BillingEstimator.h"
-#include "WiFiManager.h"
 #include "APManager.h"
+#include "BillingEstimator.h"
+#include "ChargingController.h"
 #include "CommandManager.h"
-#include "TelemetryManager.h"
-#include "TimeManager.h"
+#include "ConfigManager.h"
 #include "FirebaseManager.h"
 #include "HealthManager.h"
+#include "RelayController.h"
 #include "StorageManager.h"
+#include "TelemetryManager.h"
+#include "TimeManager.h"
+#include "VoltageSensor.h"
 #include "WeatherManager.h"
+#include "WiFiManager.h"
+
 
 HttpServer httpSrvr;
 
@@ -67,7 +68,7 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
   <div class="card header">
     <div>
       <div class="title">⚡ <span id="hdr-title">Smart Charger</span></div>
-      <div style="font-size:11px;color:var(--muted);" id="dev-endpoint">SoftAP 192.168.4.1</div>
+      <div style="font-size:11px;color:var(--muted);" id="dev-endpoint">Connecting...</div>
     </div>
     <div style="display:flex;gap:6px;align-items:center;">
       <button class="lang-btn" onclick="toggleLang()" id="lang-btn">বাংলা</button>
@@ -405,16 +406,26 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     function switchTab(id) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      event.target.classList.add('active');
-      document.getElementById('tab-' + id).classList.add('active');
+      const tabBtn = document.getElementById('tab-' + id + '-lbl');
+      if (tabBtn) tabBtn.classList.add('active');
+      const tabContent = document.getElementById('tab-' + id);
+      if (tabContent) tabContent.classList.add('active');
     }
 
     let configLoaded = false;
     let selectedProfileName = "LEAD_ACID_12V";
 
+    let isUpdating = false;
+    let consecutiveErrors = 0;
     async function update() {
+      if (isUpdating) return;
+      isUpdating = true;
       try {
-        const res = await fetch('/api/v1/status');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch('/api/v1/status', { signal: controller.signal, cache: 'no-store' });
+        clearTimeout(timeoutId);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         const t = data.telemetry;
         const s = data.stats;
@@ -432,6 +443,10 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
         btnRelay.innerText = isRelayOn ? sl.stop_chg : sl.start_chg;
         btnRelay.className = isRelayOn ? 'btn danger' : 'btn primary';
 
+        const devEp = document.getElementById('dev-endpoint');
+        if (devEp) {
+          devEp.innerText = (t.sta_connected ? ('LAN ' + (t.device_ip || '')) : ('SoftAP ' + (t.device_ip || '192.168.4.1')));
+        }
         const ring = document.getElementById('charging-ring');
         if (isRelayOn) ring.classList.add('charging'); else ring.classList.remove('charging');
 
@@ -473,9 +488,11 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
         const chkSolar = document.getElementById('chk-solar');
         if (chkSolar && c.solar_backup !== undefined) chkSolar.checked = c.solar_backup;
 
-        // Timer remaining display
-        const tStatus = document.getElementById('ui-timer-status');
-        if (tStatus) {
+        // Sync timer state for live 1-second countdown
+        timerActive = t.timer_active;
+        currentTimerSec = t.timer_remaining_seconds;
+        renderTimerUI();
+        if (false) {
           if (t.timer_active && t.timer_remaining_seconds > 0) {
             let trSec = t.timer_remaining_seconds;
             let trH = Math.floor(trSec / 3600), trM = Math.floor((trSec % 3600) / 60), trS = trSec % 60;
@@ -541,47 +558,192 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
               b.classList.add('selected');
             }
           });
-          // Auto sync phone time to device clock on initial page load!
-          syncClock(true);
+          // Time is synchronized via NTP; manual phone sync available on button click
         }
 
-        document.getElementById('sys-fw').innerText = h.firmware_version || '5.2.0-PROD';
-        document.getElementById('sys-uptime').innerText = h.uptime_seconds + ' s';
+        document.getElementById('sys-fw').innerText = h.firmware_version || '6.1.0-PROD';
+        currentUptimeSec = h.uptime_seconds; document.getElementById('sys-uptime').innerText = formatUptime(currentUptimeSec) + ' (' + currentUptimeSec + 's)';
         document.getElementById('sys-heap').innerText = h.free_heap + ' bytes';
         document.getElementById('sys-rssi').innerText = h.wifi_rssi + ' dBm';
+        const macEl = document.getElementById('sys-mac');
+        if (macEl && h.mac) macEl.innerText = h.mac;
+        consecutiveErrors = 0;
+        const mcuBadge = document.getElementById('mcu-badge');
+        if (mcuBadge) {
+          mcuBadge.innerText = 'ONLINE';
+          mcuBadge.style.background = '#22C55E';
+        }
       } catch (e) {
-        document.getElementById('mcu-badge').innerText = 'RETRY';
+        consecutiveErrors++;
+        if (consecutiveErrors >= 3) {
+          const mcuBadge = document.getElementById('mcu-badge');
+          if (mcuBadge) {
+            mcuBadge.innerText = 'RETRY';
+            mcuBadge.style.background = '#EF4444';
+          }
+        }
+      } finally {
+        isUpdating = false;
       }
     }
 
     async function toggleRelay() {
-      const cur = document.getElementById('ui-relay').innerText === 'ON';
-      await fetch('/api/v1/relay', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({action: cur ? 'OFF' : 'ON', source: 'CAPTIVE_PORTAL'})
-      });
-      update();
+      const relayTxt = document.getElementById('ui-relay');
+      const btnRelay = document.getElementById('btn-relay');
+      const ring = document.getElementById('charging-ring');
+      const sl = isBangla ? STRINGS.bn : STRINGS.en;
+      
+      const cur = (relayTxt.innerText === 'ON');
+      const next = !cur;
+
+      // 1. Instant Optimistic UI Update (< 1ms feedback)
+      relayTxt.innerText = next ? 'ON' : 'OFF';
+      relayTxt.style.color = next ? 'var(--green)' : 'var(--red)';
+      btnRelay.innerText = next ? sl.stop_chg : sl.start_chg;
+      btnRelay.className = next ? 'btn danger' : 'btn primary';
+      if (next) ring.classList.add('charging'); else ring.classList.remove('charging');
+
+      try {
+        const res = await fetch('/api/v1/relay', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({action: next ? 'ON' : 'OFF', source: 'CAPTIVE_PORTAL'})
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const actualOn = (data.relay !== undefined) ? data.relay : next;
+          relayTxt.innerText = actualOn ? 'ON' : 'OFF';
+          relayTxt.style.color = actualOn ? 'var(--green)' : 'var(--red)';
+          btnRelay.innerText = actualOn ? sl.stop_chg : sl.start_chg;
+          btnRelay.className = actualOn ? 'btn danger' : 'btn primary';
+          if (actualOn) ring.classList.add('charging'); else ring.classList.remove('charging');
+        }
+      } catch (e) {
+        console.error('Relay command error:', e);
+      }
     }
 
     async function toggleAutoMode(en) {
-      await fetch('/api/control?auto=' + (en ? 1 : 0));
-      update();
+      document.getElementById('chk-auto').checked = en;
+      try {
+        await fetch('/api/control?auto=' + (en ? 1 : 0));
+      } catch (e) {}
     }
 
     async function toggleSolar(en) {
-      await fetch('/api/weather?cloudy=' + (en ? 1 : 0));
-      update();
+      document.getElementById('chk-solar').checked = en;
+      try {
+        await fetch('/api/weather?cloudy=' + (en ? 1 : 0));
+      } catch (e) {}
     }
 
+    let currentUptimeSec = 0;
+    let currentTimerSec = 0;
+    let timerActive = false;
+
+    function formatUptime(sec) {
+      let d = Math.floor(sec / 86400);
+      let h = Math.floor((sec % 86400) / 3600);
+      let m = Math.floor((sec % 3600) / 60);
+      let s = sec % 60;
+      if (d > 0) return d + 'd ' + (h<10?'0'+h:h) + 'h ' + (m<10?'0'+m:m) + 'm ' + (s<10?'0'+s:s) + 's';
+      return (h>0?(h<10?'0'+h:h)+':':'') + (m<10?'0'+m:m) + ':' + (s<10?'0'+s:s);
+    }
+
+    function renderTimerUI() {
+      const tStatus = document.getElementById('ui-timer-status');
+      if (!tStatus) return;
+      if (timerActive && currentTimerSec > 0) {
+        let h = Math.floor(currentTimerSec / 3600);
+        let m = Math.floor((currentTimerSec % 3600) / 60);
+        let s = currentTimerSec % 60;
+        let txt = (h>0?(h<10?'0'+h:h)+':':'') + (m<10?'0'+m:m) + ':' + (s<10?'0'+s:s);
+        tStatus.style.display = 'block';
+        tStatus.innerText = (isBangla ? '⏱ টাইমার সক্রিয়: ' : '⏱ Safety Timer Active: ') + txt + (isBangla ? ' বাকি' : ' remaining');
+      } else {
+        tStatus.style.display = 'none';
+      }
+    }
+
+    function tick1Sec() {
+      currentUptimeSec++;
+      const upEl = document.getElementById('sys-uptime');
+      if (upEl && currentUptimeSec > 0) {
+        upEl.innerText = formatUptime(currentUptimeSec) + ' (' + currentUptimeSec + 's)';
+      }
+      if (timerActive && currentTimerSec > 0) {
+        currentTimerSec--;
+        renderTimerUI();
+        if (currentTimerSec === 0) {
+          timerActive = false;
+          renderTimerUI();
+          const relayTxt = document.getElementById('ui-relay');
+          const btnRelay = document.getElementById('btn-relay');
+          const ring = document.getElementById('charging-ring');
+          const sl = isBangla ? STRINGS.bn : STRINGS.en;
+          if (relayTxt) { relayTxt.innerText = 'OFF'; relayTxt.style.color = 'var(--red)'; }
+          if (btnRelay) { btnRelay.innerText = sl.start_chg; btnRelay.className = 'btn primary'; }
+          if (ring) ring.classList.remove('charging');
+          setTimeout(update, 500);
+        }
+      }
+    }
+    setInterval(tick1Sec, 1000);
+
     async function startTimer(mins) {
-      await fetch('/api/v1/timer?minutes=' + mins, {method: 'POST'});
-      update();
+      timerActive = true;
+      currentTimerSec = mins * 60;
+      renderTimerUI();
+
+      document.querySelectorAll('.preset-btn').forEach(b => {
+        if (b.getAttribute('onclick') && b.getAttribute('onclick').includes('startTimer(' + mins + ')')) {
+          b.classList.add('selected');
+        } else if (b.getAttribute('onclick') && b.getAttribute('onclick').includes('startTimer')) {
+          b.classList.remove('selected');
+        }
+      });
+
+      const relayTxt = document.getElementById('ui-relay');
+      const btnRelay = document.getElementById('btn-relay');
+      const ring = document.getElementById('charging-ring');
+      const sl = isBangla ? STRINGS.bn : STRINGS.en;
+      if (relayTxt) { relayTxt.innerText = 'ON'; relayTxt.style.color = 'var(--green)'; }
+      if (btnRelay) { btnRelay.innerText = sl.stop_chg; btnRelay.className = 'btn danger'; }
+      if (ring) ring.classList.add('charging');
+
+      try {
+        await fetch('/api/v1/timer?minutes=' + mins, {method: 'POST'});
+        setTimeout(update, 400);
+      } catch (e) {
+        console.error('startTimer error:', e);
+      }
     }
 
     async function stopTimer() {
-      await fetch('/api/v1/timer?minutes=0', {method: 'POST'});
-      update();
+      timerActive = false;
+      currentTimerSec = 0;
+      renderTimerUI();
+
+      document.querySelectorAll('.preset-btn').forEach(b => {
+        if (b.getAttribute('onclick') && b.getAttribute('onclick').includes('startTimer')) {
+          b.classList.remove('selected');
+        }
+      });
+
+      const relayTxt = document.getElementById('ui-relay');
+      const btnRelay = document.getElementById('btn-relay');
+      const ring = document.getElementById('charging-ring');
+      const sl = isBangla ? STRINGS.bn : STRINGS.en;
+      if (relayTxt) { relayTxt.innerText = 'OFF'; relayTxt.style.color = 'var(--red)'; }
+      if (btnRelay) { btnRelay.innerText = sl.start_chg; btnRelay.className = 'btn primary'; }
+      if (ring) ring.classList.remove('charging');
+
+      try {
+        await fetch('/api/v1/timer?minutes=0', {method: 'POST'});
+        setTimeout(update, 400);
+      } catch (e) {
+        console.error('stopTimer error:', e);
+      }
     }
 
     async function changeRelayPolarity(val) {
@@ -669,21 +831,43 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       update();
     }
 
-    async function scanWifi() {
+    let updateTimer = null;
+
+    async function scanWifi(forceRefresh = true) {
       const list = document.getElementById('wifi-list');
+      const scanBtn = document.getElementById('btn-scan-wifi');
       list.style.display = 'block';
-      list.innerHTML = '<span style="color:var(--muted);font-size:12px;">Scanning nearby networks...</span>';
+      list.innerHTML = '<span style="color:var(--accent);font-size:12px;">🔍 ' + (isBangla ? 'নিকটবর্তী ওয়াই-ফাই স্ক্যান হচ্ছে... (~২ সেকেন্ড)' : 'Scanning nearby networks... (~2s)') + '</span>';
+      if (scanBtn) { scanBtn.disabled = true; scanBtn.style.opacity = '0.6'; }
       try {
-        const res = await fetch('/api/scan_wifi');
-        const data = await res.json();
-        if (data.length === 0) { list.innerHTML = '<span style="color:var(--muted);font-size:12px;">No networks found</span>'; return; }
-        let html = '<div style="background:#0B0F19;border-radius:8px;padding:4px;max-height:140px;overflow-y:auto;border:1px solid #1E293B;">';
+        let url = '/api/scan_wifi' + (forceRefresh ? '?refresh=1' : '');
+        let res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        let data = await res.json();
+        
+        let retries = 0;
+        while ((!Array.isArray(data) || data.length === 0) && data.status === 'scanning' && retries < 8) {
+          await new Promise(r => setTimeout(r, 800));
+          retries++;
+          res = await fetch('/api/scan_wifi');
+          if (res.ok) data = await res.json();
+        }
+
+        if (!Array.isArray(data) || data.length === 0) {
+          list.innerHTML = '<span style="color:var(--muted);font-size:12px;">' + (isBangla ? 'কোনো ওয়াই-ফাই পাওয়া যায়নি।' : 'No Wi-Fi networks found.') + ' <a href="javascript:void(0)" onclick="scanWifi(true)" style="color:var(--accent);text-decoration:underline;">' + (isBangla ? 'আবার চেষ্টা করুন' : 'Retry Scan') + '</a></span>';
+          return;
+        }
+        let html = '<div style="background:#0B0F19;border-radius:8px;padding:4px;max-height:160px;overflow-y:auto;border:1px solid #1E293B;">';
         data.forEach(n => {
           html += `<div style="padding:8px;cursor:pointer;border-bottom:1px solid #1E293B;font-size:12px;display:flex;justify-content:space-between;" onclick="selectSsid('${n.ssid}')"><span>📶 <b>${n.ssid}</b></span><span style="color:var(--muted);">${n.quality}% [${n.security}]</span></div>`;
         });
         html += '</div>';
         list.innerHTML = html;
-      } catch(e) { list.innerHTML = '<span style="color:var(--red);font-size:12px;">Scan failed</span>'; }
+      } catch(e) {
+        list.innerHTML = '<span style="color:var(--red);font-size:12px;">Scan failed: ' + e.message + '. <a href="javascript:void(0)" onclick="scanWifi(true)" style="color:var(--accent);text-decoration:underline;">Retry</a></span>';
+      } finally {
+        if (scanBtn) { scanBtn.disabled = false; scanBtn.style.opacity = '1'; }
+      }
     }
 
     function selectSsid(name) {
@@ -692,28 +876,42 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
     }
 
     async function saveWifi() {
-      const s = document.getElementById('ssid').value;
-      const p = document.getElementById('pass').value;
+      const s = document.getElementById('ssid').value.trim();
+      const p = document.getElementById('pass').value.trim();
       if (!s) { alert('Please enter or select Wi-Fi SSID'); return; }
+      const saveBtn = document.getElementById('btn-save-wifi');
       const status = document.getElementById('save-status');
       status.style.display = 'block';
-      status.style.color = 'var(--green)';
-      status.innerText = 'Connecting to ' + s + '... Charger will connect and register on LAN.';
+      status.style.color = 'var(--accent)';
+      status.innerText = isBangla ? `কানেক্ট হচ্ছে '${s}' এ... রাউটারের সাথে যুক্ত হতে ১৫ সেকেন্ড সময় লাগবে।` : `Connecting to '${s}'... Charger will connect to router (15s).`;
+      if (saveBtn) { saveBtn.disabled = true; saveBtn.style.opacity = '0.6'; }
       try {
-        await fetch('/save?ssid=' + encodeURIComponent(s) + '&pass=' + encodeURIComponent(p), {method: 'POST'});
-      } catch(e) {}
+        const params = new URLSearchParams();
+        params.append('ssid', s);
+        params.append('pass', p);
+        await fetch('/save?ssid=' + encodeURIComponent(s) + '&pass=' + encodeURIComponent(p), {
+          method: 'POST',
+          headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+          body: params.toString()
+        });
+        status.style.color = 'var(--green)';
+        status.innerText = isBangla ? '✓ সফল! রাউটারে যুক্ত হয়ে SoftAP বন্ধ হবে।' : '✓ Credentials saved! Connecting to router...';
+      } catch(e) {
+        status.style.color = 'var(--green)';
+        status.innerText = isBangla ? '✓ রিকোয়েস্ট পাঠানো হয়েছে! রাউটারে যুক্ত হচ্ছে...' : '✓ Dispatched! Connecting to router...';
+      }
     }
 
     async function emergencyStop() {
       if (confirm('Trigger Emergency Stop? This will shut off relay immediately.')) {
         await fetch('/api/v1/emergency-stop?action=stop', {method: 'POST'});
-        update();
+        setTimeout(update, 120);
       }
     }
 
     async function resumeNormal() {
       await fetch('/api/v1/emergency-stop?action=resume', {method: 'POST'});
-      update();
+      setTimeout(update, 120);
     }
 
     async function safeReboot() {
@@ -730,14 +928,16 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       }
     }
 
-    setInterval(update, 2000);
+    updateTimer = setInterval(update, 3000);
     update();
   </script>
 </body>
 </html>
 )rawliteral";
 
-HttpServer::HttpServer() : _server(80), _lastInteractionTime(0) {}
+HttpServer::HttpServer()
+    : _server(80), _lastInteractionTime(0), _cachedScanJson("[]"),
+      _scanInProgress(false), _lastScanTime(0) {}
 
 void HttpServer::begin() {
   setupRoutes();
@@ -747,6 +947,58 @@ void HttpServer::begin() {
 
 void HttpServer::loop() {
   _server.handleClient();
+
+  // Async Wi-Fi scan state machine - only check when a scan was actually
+  // triggered!
+  if (_scanInProgress) {
+    int scanStatus = WiFi.scanComplete();
+    if (scanStatus >= 0) {
+      updateScanCache(scanStatus);
+    } else if (scanStatus == WIFI_SCAN_FAILED) {
+      _scanInProgress = false;
+      Serial.println(F("[HttpServer] Wi-Fi scan failed."));
+    }
+  }
+}
+
+void HttpServer::triggerAsyncScan() {
+  if (_scanInProgress || WiFi.scanComplete() == WIFI_SCAN_RUNNING)
+    return;
+  if (WiFi.getMode() != WIFI_AP_STA && WiFi.getMode() != WIFI_STA) {
+    WiFi.mode(WIFI_AP_STA);
+    delay(20);
+  }
+  _scanInProgress = true;
+  Serial.println(F("[HttpServer] Starting background async Wi-Fi scan..."));
+  WiFi.scanNetworks(true /* async */,
+                    false /* show_hidden false for 2x faster scan */);
+}
+
+void HttpServer::updateScanCache(int n) {
+  _scanInProgress = false;
+  _lastScanTime = millis();
+  String json = "[";
+  for (int i = 0; i < n; i++) {
+    String sName = WiFi.SSID(i);
+    if (sName.length() == 0)
+      continue;
+    if (json.length() > 1)
+      json += ",";
+    int q = 2 * (WiFi.RSSI(i) + 100);
+    if (q > 100)
+      q = 100;
+    if (q < 0)
+      q = 0;
+    String enc = (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? "OPEN" : "SECURED";
+    json += "{\"ssid\":\"" + sName + "\",\"quality\":" + String(q) +
+            ",\"security\":\"" + enc +
+            "\",\"channel\":" + String(WiFi.channel(i)) + "}";
+  }
+  json += "]";
+  WiFi.scanDelete();
+  _cachedScanJson = json;
+  Serial.printf(
+      "[HttpServer] Wi-Fi scan complete! %d networks cached in RAM.\n", n);
 }
 
 void HttpServer::setupRoutes() {
@@ -758,7 +1010,8 @@ void HttpServer::setupRoutes() {
   // ── OS Connectivity & Captive Portal Probes ──
   auto handleProbeCaptive = [this]() {
     _lastInteractionTime = millis();
-    // Return 204 No Content so modern Android / iOS considers the Wi-Fi connection valid and NEVER auto-disconnects
+    // Return 204 No Content so modern Android / iOS considers the Wi-Fi
+    // connection valid and NEVER auto-disconnects
     _server.sendHeader("Access-Control-Allow-Origin", "*");
     _server.sendHeader("Connection", "close");
     _server.send(204, "text/plain", "");
@@ -771,13 +1024,17 @@ void HttpServer::setupRoutes() {
   // Microsoft NCSI probe
   _server.on("/ncsi.txt", HTTP_GET, [this]() {
     _server.sendHeader("Access-Control-Allow-Origin", "*");
+    _server.sendHeader("Connection", "close");
     _server.send(200, "text/plain", "Microsoft NCSI");
   });
 
   // Apple Captive probe
   auto handleAppleSuccess = [this]() {
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.send(200, "text/html", "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
+    _server.sendHeader("Connection", "close");
+    _server.send(
+        200, "text/html",
+        "<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>");
   };
   _server.on("/hotspot-detect.html", HTTP_GET, handleAppleSuccess);
   _server.on("/library/test/success.html", HTTP_GET, handleAppleSuccess);
@@ -799,7 +1056,7 @@ void HttpServer::setupRoutes() {
   _server.on("/api/v1/config", HTTP_POST, [this]() { handleConfigPost(); });
   _server.on("/api/config", HTTP_GET, [this]() { handleConfigGet(); });
   _server.on("/api/config", HTTP_POST, [this]() { handleConfigPost(); });
-  
+
   _server.on("/api/control", HTTP_GET, [this]() { handleControlGet(); });
 
   _server.on("/api/timer", HTTP_GET, [this]() {
@@ -810,7 +1067,9 @@ void HttpServer::setupRoutes() {
       chargingCtrl.cancelTimer();
     }
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.send(200, "application/json", "{\"success\":true,\"timer_minutes\":" + String(mins) + "}");
+    _server.sendHeader("Connection", "close");
+    _server.send(200, "application/json",
+                 "{\"success\":true,\"timer_minutes\":" + String(mins) + "}");
   });
 
   _server.on("/api/v1/timer", HTTP_POST, [this]() {
@@ -821,21 +1080,28 @@ void HttpServer::setupRoutes() {
       chargingCtrl.cancelTimer();
     }
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.send(200, "application/json", "{\"success\":true,\"timer_minutes\":" + String(mins) + "}");
+    _server.sendHeader("Connection", "close");
+    _server.send(200, "application/json",
+                 "{\"success\":true,\"timer_minutes\":" + String(mins) + "}");
   });
 
   _server.on("/api/v1/relay", HTTP_POST, [this]() { handleRelayPost(); });
   _server.on("/api/relay", HTTP_POST, [this]() { handleRelayPost(); });
   _server.on("/api/relay", HTTP_GET, [this]() { handleRelayPost(); });
   _server.on("/api/v1/command", HTTP_POST, [this]() { handleCommandPost(); });
-  _server.on("/api/v1/emergency-stop", HTTP_POST, [this]() { handleEmergencyStopPost(); });
-  _server.on("/api/v1/maintenance", HTTP_POST, [this]() { handleMaintenancePost(); });
+  _server.on("/api/v1/emergency-stop", HTTP_POST,
+             [this]() { handleEmergencyStopPost(); });
+  _server.on("/api/v1/maintenance", HTTP_POST,
+             [this]() { handleMaintenancePost(); });
   _server.on("/api/v1/schedule", HTTP_POST, [this]() { handleSchedulePost(); });
   _server.on("/api/schedule", HTTP_POST, [this]() { handleSchedulePost(); });
   auto handleScheduleResetAction = [this]() {
     chargingCtrl.resetDailySchedule();
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.send(200, "application/json", "{\"success\":true,\"message\":\"Today's schedule completion reset. Schedule ready to run.\"}");
+    _server.sendHeader("Connection", "close");
+    _server.send(200, "application/json",
+                 "{\"success\":true,\"message\":\"Today's schedule completion "
+                 "reset. Schedule ready to run.\"}");
   };
   _server.on("/api/v1/schedule/reset", HTTP_POST, handleScheduleResetAction);
   _server.on("/api/schedule/reset", HTTP_POST, handleScheduleResetAction);
@@ -847,26 +1113,29 @@ void HttpServer::setupRoutes() {
   _server.on("/api/time", HTTP_GET, [this]() { handleTimePost(); });
 
   _server.on("/api/v1/sessions", HTTP_GET, [this]() { handleSessionsGet(); });
-  _server.on("/api/v1/sessions/ack", HTTP_POST, [this]() { handleSessionsAck(); });
+  _server.on("/api/v1/sessions/ack", HTTP_POST,
+             [this]() { handleSessionsAck(); });
 
   auto handleDailyBillsGet = [this]() {
     _lastInteractionTime = millis();
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.sendHeader("Cache-Control", "no-cache");
-    _server.sendHeader("Connection", "close");
     _server.send(200, "application/json", billingEstimator.getDailyBillsJson());
   };
   _server.on("/api/v1/bills/daily", HTTP_GET, handleDailyBillsGet);
   _server.on("/api/bills/daily", HTTP_GET, handleDailyBillsGet);
   _server.on("/api/daily_bills", HTTP_GET, handleDailyBillsGet);
 
-  _server.on("/api/v1/diagnostics/relay", HTTP_GET, [this]() { handleDiagnosticsRelay(); });
+  _server.on("/api/v1/diagnostics/relay", HTTP_GET,
+             [this]() { handleDiagnosticsRelay(); });
   _server.on("/api/v1/reset", HTTP_POST, [this]() { handleReset(); });
   _server.on("/api/reset", HTTP_POST, [this]() { handleReset(); });
   _server.on("/api/reboot", HTTP_POST, [this]() { handleReset(); });
   auto handleFactoryResetAction = [this]() {
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.send(200, "application/json", "{\"status\":\"ok\",\"message\":\"Factory Reset Initialized. Rebooting...\"}");
+    _server.sendHeader("Connection", "close");
+    _server.send(200, "application/json",
+                 "{\"status\":\"ok\",\"message\":\"Factory Reset Initialized. "
+                 "Rebooting...\"}");
     delay(500);
     configMgr.factoryReset();
     ESP.restart();
@@ -880,7 +1149,10 @@ void HttpServer::setupRoutes() {
     billingEstimator.resetEnergyStats();
     firebaseMgr.triggerImmediateSync();
     _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.send(200, "application/json", "{\"success\":true,\"message\":\"Energy and billing statistics reset to zero.\"}");
+    _server.sendHeader("Connection", "close");
+    _server.send(200, "application/json",
+                 "{\"success\":true,\"message\":\"Energy and billing "
+                 "statistics reset to zero.\"}");
   };
   _server.on("/api/v1/billing/reset", HTTP_POST, handleBillingResetAction);
   _server.on("/api/billing/reset", HTTP_POST, handleBillingResetAction);
@@ -888,46 +1160,79 @@ void HttpServer::setupRoutes() {
   _server.on("/api/stats/reset", HTTP_POST, handleBillingResetAction);
   _server.on("/api/v1/logs", HTTP_GET, [this]() {
     _server.sendHeader("Access-Control-Allow-Origin", "*");
+    _server.sendHeader("Connection", "close");
     _server.send(200, "application/json", telemetryMgr.getLogsJson());
   });
 
   _server.on("/api/scan_wifi", HTTP_GET, [this]() { handleScanWifi(); });
   _server.on("/api/v1/wifi/scan", HTTP_GET, [this]() { handleScanWifi(); });
   _server.on("/save", HTTP_POST, [this]() { handleSaveCredentials(); });
+  _server.on("/save", HTTP_GET, [this]() { handleSaveCredentials(); });
   _server.on("/api/save", HTTP_POST, [this]() { handleSaveCredentials(); });
-  _server.on("/api/save_wifi", HTTP_POST, [this]() { handleSaveCredentials(); });
-  _server.on("/api/v1/wifi/save", HTTP_POST, [this]() { handleSaveCredentials(); });
+  _server.on("/api/save", HTTP_GET, [this]() { handleSaveCredentials(); });
+  _server.on("/api/save_wifi", HTTP_POST,
+             [this]() { handleSaveCredentials(); });
+  _server.on("/api/save_wifi", HTTP_GET, [this]() { handleSaveCredentials(); });
+  _server.on("/api/v1/wifi/save", HTTP_POST,
+             [this]() { handleSaveCredentials(); });
+  _server.on("/api/v1/wifi/save", HTTP_GET,
+             [this]() { handleSaveCredentials(); });
 
   auto handleWeatherEndpoint = [this]() {
     _server.sendHeader("Access-Control-Allow-Origin", "*");
+    _server.sendHeader("Connection", "close");
     if (_server.hasArg("manual_mode") || _server.hasArg("mode")) {
-      String mm = _server.hasArg("manual_mode") ? _server.arg("manual_mode") : _server.arg("mode");
-      if (mm.equalsIgnoreCase("AUTO") || mm.equalsIgnoreCase("CLEAR_OVERRIDE") || mm == "0") {
+      String mm = _server.hasArg("manual_mode") ? _server.arg("manual_mode")
+                                                : _server.arg("mode");
+      if (mm.equalsIgnoreCase("AUTO") ||
+          mm.equalsIgnoreCase("CLEAR_OVERRIDE") || mm == "0") {
         weatherMgr.clearManualOverride();
       } else {
         weatherMgr.setManualWeatherMode(weatherStatusFromString(mm));
       }
-    } else if (_server.hasArg("cloudy") || _server.hasArg("cloud_cover") || _server.hasArg("solar_cloudy")) {
-      int cc = _server.hasArg("cloud_cover") ? _server.arg("cloud_cover").toInt() :
-               ((_server.hasArg("cloudy") && (_server.arg("cloudy") == "1" || _server.arg("cloudy") == "true")) ? 80 : 20);
-      int wc = _server.hasArg("weather_code") ? _server.arg("weather_code").toInt() : 0;
-      bool isCloudy = (_server.hasArg("cloudy") && (_server.arg("cloudy") == "1" || _server.arg("cloudy") == "true")) ||
-                      (_server.hasArg("solar_cloudy") && (_server.arg("solar_cloudy") == "1" || _server.arg("solar_cloudy") == "true")) ||
-                      cc > 60 || wc >= 51;
+    } else if (_server.hasArg("cloudy") || _server.hasArg("cloud_cover") ||
+               _server.hasArg("solar_cloudy")) {
+      int cc =
+          _server.hasArg("cloud_cover")
+              ? _server.arg("cloud_cover").toInt()
+              : ((_server.hasArg("cloudy") && (_server.arg("cloudy") == "1" ||
+                                               _server.arg("cloudy") == "true"))
+                     ? 80
+                     : 20);
+      int wc = _server.hasArg("weather_code")
+                   ? _server.arg("weather_code").toInt()
+                   : 0;
+      bool isCloudy =
+          (_server.hasArg("cloudy") &&
+           (_server.arg("cloudy") == "1" || _server.arg("cloudy") == "true")) ||
+          (_server.hasArg("solar_cloudy") &&
+           (_server.arg("solar_cloudy") == "1" ||
+            _server.arg("solar_cloudy") == "true")) ||
+          cc > 60 || wc >= 51;
       weatherMgr.setWeatherData(cc, wc, isCloudy);
-    } else if (_server.method() == HTTP_POST && !_server.hasArg("cloudy") && !_server.hasArg("manual_mode")) {
+    } else if (_server.method() == HTTP_POST && !_server.hasArg("cloudy") &&
+               !_server.hasArg("manual_mode")) {
       weatherMgr.fetchWeather(true);
     }
     String json = "{";
     json += "\"success\":true,";
     json += "\"cloud_cover\":" + String(weatherMgr.getCloudCover()) + ",";
     json += "\"weather_code\":" + String(weatherMgr.getWeatherCode()) + ",";
-    json += "\"weather_status\":\"" + String(weatherMgr.getWeatherStatusString()) + "\",";
-    json += "\"weatherStatus\":\"" + String(weatherMgr.getWeatherStatusString()) + "\",";
-    json += "\"manual_override\":" + String(weatherMgr.isManualOverrideActive() ? "true" : "false") + ",";
-    json += "\"is_cloudy\":" + String(weatherMgr.isCloudy() ? "true" : "false") + ",";
-    json += "\"solar_cloudy\":" + String(weatherMgr.isCloudy() ? "true" : "false") + ",";
-    json += "\"has_valid_data\":" + String(weatherMgr.hasValidData() ? "true" : "false") + ",";
+    json += "\"weather_status\":\"" +
+            String(weatherMgr.getWeatherStatusString()) + "\",";
+    json += "\"weatherStatus\":\"" +
+            String(weatherMgr.getWeatherStatusString()) + "\",";
+    json += "\"manual_override\":" +
+            String(weatherMgr.isManualOverrideActive() ? "true" : "false") +
+            ",";
+    json +=
+        "\"is_cloudy\":" + String(weatherMgr.isCloudy() ? "true" : "false") +
+        ",";
+    json +=
+        "\"solar_cloudy\":" + String(weatherMgr.isCloudy() ? "true" : "false") +
+        ",";
+    json += "\"has_valid_data\":" +
+            String(weatherMgr.hasValidData() ? "true" : "false") + ",";
     json += "\"lat\":" + String(configMgr.get().weatherLat, 4) + ",";
     json += "\"lon\":" + String(configMgr.get().weatherLon, 4) + "}";
     _server.send(200, "application/json", json);
@@ -945,8 +1250,9 @@ void HttpServer::setupRoutes() {
 void HttpServer::handleRoot() {
   _lastInteractionTime = millis();
   _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Cache-Control", "no-cache");
   _server.sendHeader("Connection", "close");
-  _server.send_P(200, "text/html", INDEX_HTML);
+  _server.send_P(200, "text/html", INDEX_HTML, sizeof(INDEX_HTML) - 1);
 }
 
 void HttpServer::handleHealth() {
@@ -959,201 +1265,234 @@ void HttpServer::handleHealth() {
 
 void HttpServer::handleNetworkGet() {
   _lastInteractionTime = millis();
-  const DeviceConfig& cfg = configMgr.get();
+  const DeviceConfig &cfg = configMgr.get();
   bool staConnected = wifiMgr.isConnected();
-  String currentIp = staConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+  String currentIp =
+      staConnected ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
 
   String json = "{";
-  json += "\"staSsid\":\""         + wifiMgr.getSsid() + "\",";
-  json += "\"staConnected\":"      + String(staConnected ? "true" : "false") + ",";
-  json += "\"staIp\":\""           + wifiMgr.getStaIpString() + "\",";
-  json += "\"gateway\":\""         + (staConnected ? WiFi.gatewayIP().toString() : "0.0.0.0") + "\",";
-  json += "\"subnet\":\""          + (staConnected ? WiFi.subnetMask().toString() : "0.0.0.0") + "\",";
-  json += "\"dns\":\""             + (staConnected ? WiFi.dnsIP().toString() : "0.0.0.0") + "\",";
-  json += "\"mac\":\""             + WiFi.macAddress() + "\",";
-  json += "\"wifi_rssi\":"         + String(wifiMgr.getRssi()) + ",";
-  json += "\"apSsid\":\""          + String(cfg.apSsid) + "\",";
-  json += "\"apIp\":\""            + apMgr.getApIpString() + "\",";
-  json += "\"apEnabled\":"         + String(cfg.apEnabled ? "true" : "false") + ",";
-  json += "\"apClients\":"         + String(WiFi.softAPgetStationNum()) + ",";
-  json += "\"mdnsHost\":\""        + String(DEFAULT_MDNS_HOST) + ".local\",";
-  json += "\"udpPort\":"           + String(UDP_DISCOVERY_PORT) + ",";
-  json += "\"activeTransport\":\"" + String(staConnected ? "LOCAL_LAN" : "DIRECT_AP") + "\"}";
+  json += "\"staSsid\":\"" + wifiMgr.getSsid() + "\",";
+  json += "\"staConnected\":" + String(staConnected ? "true" : "false") + ",";
+  json += "\"staIp\":\"" + wifiMgr.getStaIpString() + "\",";
+  json += "\"gateway\":\"" +
+          (staConnected ? WiFi.gatewayIP().toString() : "0.0.0.0") + "\",";
+  json += "\"subnet\":\"" +
+          (staConnected ? WiFi.subnetMask().toString() : "0.0.0.0") + "\",";
+  json += "\"dns\":\"" + (staConnected ? WiFi.dnsIP().toString() : "0.0.0.0") +
+          "\",";
+  json += "\"mac\":\"" + WiFi.macAddress() + "\",";
+  json += "\"wifi_rssi\":" + String(wifiMgr.getRssi()) + ",";
+  json += "\"apSsid\":\"" + String(cfg.apSsid) + "\",";
+  json += "\"apIp\":\"" + apMgr.getApIpString() + "\",";
+  json += "\"apEnabled\":" + String(cfg.apEnabled ? "true" : "false") + ",";
+  json += "\"apClients\":" + String(WiFi.softAPgetStationNum()) + ",";
+  json += "\"mdnsHost\":\"" + String(DEFAULT_MDNS_HOST) + ".local\",";
+  json += "\"udpPort\":" + String(UDP_DISCOVERY_PORT) + ",";
+  json += "\"activeTransport\":\"" +
+          String(staConnected ? "LOCAL_LAN" : "DIRECT_AP") + "\"}";
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
-  _server.sendHeader("Cache-Control", "no-cache");
-  _server.sendHeader("Connection", "close");
   _server.send(200, "application/json", json);
 }
 
 void HttpServer::handleStatus() {
   _lastInteractionTime = millis();
-  const DeviceConfig& cfg = configMgr.get();
+  const DeviceConfig &cfg = configMgr.get();
   float volts = voltageSensor.getLastVoltage();
   bool relayOn = relayCtrl.isOn();
   unsigned long nowSec = millis() / 1000;
 
-  String json = "{";
+  _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
+  _server.sendHeader("Cache-Control", "no-cache");
+  _server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+  _server.send(200, "application/json", "");
+
+  String json;
+  json.reserve(700);
+  json = "{\"telemetry\":{";
+  json = "{";
   // Telemetry node
   json += "\"telemetry\":{";
-  json += "\"battery_voltage\":"         + String(volts, 2) + ",";
-  json += "\"batteryVoltage\":"          + String(volts, 2) + ",";
-  json += "\"voltage\":"                 + String(volts, 2) + ",";
-  json += "\"raw_adc\":"                 + String(voltageSensor.getRawAdc()) + ",";
-  json += "\"sta_ssid\":\""              + wifiMgr.getSsid() + "\",";
-  json += "\"sta_connected\":"           + String(wifiMgr.isConnected() ? "true" : "false") + ",";
-  String sStatus = voltageSensor.isDisconnected() ? "STANDBY" : 
-                   (voltageSensor.isProfileMismatch() ? "PROFILE_MISMATCH" :
-                   (voltageSensor.isOverVoltage() ? "WARNING" : "OK"));
-  json += "\"sensor_disconnected\":"     + String(voltageSensor.isDisconnected() ? "true" : "false") + ",";
-  json += "\"is_sensor_disconnected\":"  + String(voltageSensor.isDisconnected() ? "true" : "false") + ",";
-  json += "\"isSensorDisconnected\":"    + String(voltageSensor.isDisconnected() ? "true" : "false") + ",";
-  json += "\"sensor_status\":\""         + sStatus + "\",";
-  json += "\"sensorStatus\":\""          + sStatus + "\",";
-  json += "\"is_profile_mismatch\":"     + String(voltageSensor.isProfileMismatch() ? "true" : "false") + ",";
-  json += "\"isProfileMismatch\":"       + String(voltageSensor.isProfileMismatch() ? "true" : "false") + ",";
-  json += "\"relay_state\":"             + String(relayOn ? "true" : "false") + ",";
-  json += "\"charging_state\":\""        + String(chargingCtrl.getStateString()) + "\",";
-  json += "\"charging_mode\":\""         + String(operatingModeToString((OperatingMode)cfg.chargingMode)) + "\",";
-  json += "\"operating_mode\":\""        + String(operatingModeToString((OperatingMode)cfg.chargingMode)) + "\",";
-  json += "\"auto_mode\":"               + String(cfg.autoMode ? "true" : "false") + ",";
-  json += "\"solar_backup\":"            + String(cfg.solarBackupEnabled ? "true" : "false") + ",";
-  json += "\"timer_active\":"            + String(chargingCtrl.isTimerActive() ? "true" : "false") + ",";
-  json += "\"timer_remaining_seconds\":" + String(chargingCtrl.getTimerRemainingSeconds()) + ",";
-  json += "\"schedule_compensating\":"        + String(chargingCtrl.isScheduleCompensating() ? "true" : "false") + ",";
-  json += "\"scheduleCompensating\":"         + String(chargingCtrl.isScheduleCompensating() ? "true" : "false") + ",";
-  json += "\"schedule_remaining_seconds\":"    + String(chargingCtrl.getScheduleRemainingSeconds()) + ",";
-  json += "\"scheduleRemainingSeconds\":"     + String(chargingCtrl.getScheduleRemainingSeconds()) + ",";
-  json += "\"schedule_today_completed\":"     + String(chargingCtrl.isDailyScheduleCompleted() ? "true" : "false") + ",";
-  json += "\"scheduleTodayCompleted\":"       + String(chargingCtrl.isDailyScheduleCompleted() ? "true" : "false") + ",";
-  json += "\"schedule_today_date\":"          + String(chargingCtrl.getScheduleDateCode()) + ",";
-  json += "\"scheduleTodayDate\":"            + String(chargingCtrl.getScheduleDateCode()) + ",";
-  json += "\"schedule_today_status\":\""      + String(chargingCtrl.getDailyScheduleStatus()) + "\",";
-  json += "\"scheduleTodayStatus\":\""        + String(chargingCtrl.getDailyScheduleStatus()) + "\",";
-  json += "\"schedule_charged_seconds\":"     + String(chargingCtrl.getDailyScheduleChargedSecs()) + ",";
-  json += "\"scheduleChargedSecs\":"          + String(chargingCtrl.getDailyScheduleChargedSecs()) + ",";
-  json += "\"schedule_total_seconds\":"       + String(chargingCtrl.getScheduleTotalSeconds()) + ",";
-  json += "\"scheduleTotalSecs\":"            + String(chargingCtrl.getScheduleTotalSeconds()) + ",";
-  json += "\"manual_lock_secs\":"        + String(relayCtrl.getManualLockRemainingSecs()) + ",";
-  json += "\"uptime_secs\":"             + String(nowSec) + ",";
-  json += "\"wifi_rssi\":"               + String(wifiMgr.getRssi()) + ",";
-  json += "\"device_ip\":\""             + (wifiMgr.isConnected() ? wifiMgr.getStaIpString() : apMgr.getApIpString()) + "\",";
-  json += "\"has_fault\":"               + String((voltageSensor.isOverVoltage() || relayCtrl.isChatterFault()) ? "true" : "false") + ",";
-  json += "\"cloud_cover\":"             + String(weatherMgr.getCloudCover()) + ",";
-  json += "\"weather_code\":"            + String(weatherMgr.getWeatherCode()) + ",";
-  json += "\"weather_status\":\""        + String(weatherMgr.getWeatherStatusString()) + "\",";
-  json += "\"weatherStatus\":\""         + String(weatherMgr.getWeatherStatusString()) + "\",";
-  json += "\"weather_manual_override\":" + String(weatherMgr.isManualOverrideActive() ? "true" : "false") + ",";
-  json += "\"weatherManualOverride\":"   + String(weatherMgr.isManualOverrideActive() ? "true" : "false") + ",";
-  json += "\"weather_cloudy\":"          + String(weatherMgr.isCloudy() ? "true" : "false") + ",";
-  json += "\"solar_cloudy\":"            + String(weatherMgr.isCloudy() ? "true" : "false") + ",";
-  json += "\"relay_diagnostic\":\""      + String(relayCtrl.getDiagnosticStatus()) + "\",";
-  json += "\"is_setup_mode\":"          + String(apMgr.isSetupMode() ? "true" : "false") + ",";
-  json += "\"isSetupMode\":"            + String(apMgr.isSetupMode() ? "true" : "false") + ",";
-  json += "\"ap_ssid\":\""              + apMgr.getApSsid() + "\",";
-  json += "\"apSsid\":\""                + apMgr.getApSsid() + "\"},";
+  json += "\"battery_voltage\":" + String(volts, 2) + ",";
+  json += "\"raw_adc\":" + String(voltageSensor.getRawAdc()) + ",";
+  json += "\"sta_ssid\":\"" + wifiMgr.getSsid() + "\",";
+  json +=
+      "\"sta_connected\":" + String(wifiMgr.isConnected() ? "true" : "false") +
+      ",";
+  String sStatus =
+      voltageSensor.isDisconnected()
+          ? "STANDBY"
+          : (voltageSensor.isProfileMismatch()
+                 ? "PROFILE_MISMATCH"
+                 : (voltageSensor.isOverVoltage() ? "WARNING" : "OK"));
+  json += "\"sensor_disconnected\":" +
+          String(voltageSensor.isDisconnected() ? "true" : "false") + ",";
+  json += "\"sensor_status\":\"" + sStatus + "\",";
+  json += "\"is_profile_mismatch\":" +
+          String(voltageSensor.isProfileMismatch() ? "true" : "false") + ",";
+  json += "\"relay_state\":" + String(relayOn ? "true" : "false") + ",";
+  json +=
+      "\"charging_state\":\"" + String(chargingCtrl.getStateString()) + "\",";
+  json += "\"charging_mode\":\"" +
+          String(operatingModeToString((OperatingMode)cfg.chargingMode)) +
+          "\",";
+  json += "\"auto_mode\":" + String(cfg.autoMode ? "true" : "false") + ",";
+  json +=
+      "\"solar_backup\":" + String(cfg.solarBackupEnabled ? "true" : "false") +
+      ",";
+  json += "\"timer_active\":" +
+          String(chargingCtrl.isTimerActive() ? "true" : "false") + ",";
+  json += "\"timer_remaining_seconds\":" +
+          String(chargingCtrl.getTimerRemainingSeconds()) + ",";
+  json += "\"schedule_compensating\":" +
+          String(chargingCtrl.isScheduleCompensating() ? "true" : "false") +
+          ",";
+  json += "\"schedule_remaining_seconds\":" +
+          String(chargingCtrl.getScheduleRemainingSeconds()) + ",";
+  json += "\"schedule_today_completed\":" +
+          String(chargingCtrl.isDailyScheduleCompleted() ? "true" : "false") +
+          ",";
+  json +=
+      "\"schedule_today_date\":" + String(chargingCtrl.getScheduleDateCode()) +
+      ",";
+  json += "\"schedule_today_status\":\"" +
+          String(chargingCtrl.getDailyScheduleStatus()) + "\",";
+  json += "\"schedule_charged_seconds\":" +
+          String(chargingCtrl.getDailyScheduleChargedSecs()) + ",";
+  json += "\"schedule_total_seconds\":" +
+          String(chargingCtrl.getScheduleTotalSeconds()) + ",";
+  json +=
+      "\"manual_lock_secs\":" + String(relayCtrl.getManualLockRemainingSecs()) +
+      ",";
+  json += "\"uptime_secs\":" + String(nowSec) + ",";
+  json += "\"wifi_rssi\":" + String(wifiMgr.getRssi()) + ",";
+  json += "\"device_ip\":\"" +
+          (wifiMgr.isConnected() ? wifiMgr.getStaIpString()
+                                 : apMgr.getApIpString()) +
+          "\",";
+  json += "\"has_fault\":" +
+          String((voltageSensor.isOverVoltage() || relayCtrl.isChatterFault())
+                     ? "true"
+                     : "false") +
+          ",";
+  json += "\"cloud_cover\":" + String(weatherMgr.getCloudCover()) + ",";
+  json += "\"weather_code\":" + String(weatherMgr.getWeatherCode()) + ",";
+  json += "\"weather_status\":\"" +
+          String(weatherMgr.getWeatherStatusString()) + "\",";
+  json += "\"weather_manual_override\":" +
+          String(weatherMgr.isManualOverrideActive() ? "true" : "false") + ",";
+  json +=
+      "\"weather_cloudy\":" + String(weatherMgr.isCloudy() ? "true" : "false") +
+      ",";
+  json +=
+      "\"solar_cloudy\":" + String(weatherMgr.isCloudy() ? "true" : "false") +
+      ",";
+  json += "\"relay_diagnostic\":\"" + String(relayCtrl.getDiagnosticStatus()) +
+          "\",";
+  json +=
+      "\"is_setup_mode\":" + String(apMgr.isSetupMode() ? "true" : "false") +
+      ",";
+  json += "\"ap_ssid\":\"" + apMgr.getApSsid() + "\"},";
+  _server.sendContent(json);
 
   // Stats node
-  json += "\"stats\":{";
-  json += "\"current_session_seconds\":" + String(billingEstimator.getCurrentSessionSeconds()) + ",";
-  json += "\"today_seconds\":"           + String(billingEstimator.getTodaySeconds()) + ",";
-  json += "\"total_seconds\":"           + String(billingEstimator.getTotalSeconds()) + ",";
-  json += "\"today_estimated_kwh\":"     + String(billingEstimator.getTodayKwh(), 4) + ",";
-  json += "\"today_estimated_bdt\":"     + String(billingEstimator.getTodayCostBdt(), 2) + ",";
-  json += "\"total_estimated_kwh\":"     + String(billingEstimator.getTotalKwh(), 4) + ",";
-  json += "\"total_estimated_bdt\":"     + String(billingEstimator.getTotalCostBdt(), 2) + ",";
-  json += "\"auto_kwh\":"                + String(billingEstimator.getAutoKwh(), 4) + ",";
-  json += "\"auto_bdt\":"                + String(billingEstimator.getAutoCostBdt(), 2) + ",";
-  json += "\"autoKwh\":"                 + String(billingEstimator.getAutoKwh(), 4) + ",";
-  json += "\"autoCostBdt\":"             + String(billingEstimator.getAutoCostBdt(), 2) + ",";
-  json += "\"manual_kwh\":"              + String(billingEstimator.getManualKwh(), 4) + ",";
-  json += "\"manual_bdt\":"              + String(billingEstimator.getManualCostBdt(), 2) + ",";
-  json += "\"manualKwh\":"               + String(billingEstimator.getManualKwh(), 4) + ",";
-  json += "\"manualCostBdt\":"           + String(billingEstimator.getManualCostBdt(), 2) + ",";
-  json += "\"schedule_kwh\":"            + String(billingEstimator.getScheduleKwh(), 4) + ",";
-  json += "\"schedule_bdt\":"            + String(billingEstimator.getScheduleCostBdt(), 2) + ",";
-  json += "\"scheduleKwh\":"             + String(billingEstimator.getScheduleKwh(), 4) + ",";
-  json += "\"scheduleCostBdt\":"         + String(billingEstimator.getScheduleCostBdt(), 2) + ",";
-  json += "\"timer_kwh\":"               + String(billingEstimator.getTimerKwh(), 4) + ",";
-  json += "\"timer_bdt\":"               + String(billingEstimator.getTimerCostBdt(), 2) + ",";
-  json += "\"timerKwh\":"                + String(billingEstimator.getTimerKwh(), 4) + ",";
-  json += "\"timerCostBdt\":"            + String(billingEstimator.getTimerCostBdt(), 2) + ",";
-  json += "\"solar_kwh\":"               + String(billingEstimator.getSolarKwh(), 4) + ",";
-  json += "\"solar_bdt\":"               + String(billingEstimator.getSolarCostBdt(), 2) + ",";
-  json += "\"solarKwh\":"                + String(billingEstimator.getSolarKwh(), 4) + ",";
-  json += "\"solarCostBdt\":"            + String(billingEstimator.getSolarCostBdt(), 2) + ",";
-  json += "\"daily_bills_count\":"       + String(billingEstimator.getDailyBillCount()) + "},";
+  json = "\"stats\":{";
+  json += "\"current_session_seconds\":" +
+          String(billingEstimator.getCurrentSessionSeconds()) + ",";
+  json +=
+      "\"today_seconds\":" + String(billingEstimator.getTodaySeconds()) + ",";
+  json +=
+      "\"total_seconds\":" + String(billingEstimator.getTotalSeconds()) + ",";
+  json +=
+      "\"today_estimated_kwh\":" + String(billingEstimator.getTodayKwh(), 4) +
+      ",";
+  json += "\"today_estimated_bdt\":" +
+          String(billingEstimator.getTodayCostBdt(), 2) + ",";
+  json +=
+      "\"total_estimated_kwh\":" + String(billingEstimator.getTotalKwh(), 4) +
+      ",";
+  json += "\"total_estimated_bdt\":" +
+          String(billingEstimator.getTotalCostBdt(), 2) + ",";
+  json += "\"auto_kwh\":" + String(billingEstimator.getAutoKwh(), 4) + ",";
+  json += "\"auto_bdt\":" + String(billingEstimator.getAutoCostBdt(), 2) + ",";
+  json += "\"manual_kwh\":" + String(billingEstimator.getManualKwh(), 4) + ",";
+  json +=
+      "\"manual_bdt\":" + String(billingEstimator.getManualCostBdt(), 2) + ",";
+  json +=
+      "\"schedule_kwh\":" + String(billingEstimator.getScheduleKwh(), 4) + ",";
+  json +=
+      "\"schedule_bdt\":" + String(billingEstimator.getScheduleCostBdt(), 2) +
+      ",";
+  json += "\"timer_kwh\":" + String(billingEstimator.getTimerKwh(), 4) + ",";
+  json +=
+      "\"timer_bdt\":" + String(billingEstimator.getTimerCostBdt(), 2) + ",";
+  json += "\"solar_kwh\":" + String(billingEstimator.getSolarKwh(), 4) + ",";
+  json +=
+      "\"solar_bdt\":" + String(billingEstimator.getSolarCostBdt(), 2) + ",";
+  json +=
+      "\"daily_bills_count\":" + String(billingEstimator.getDailyBillCount()) +
+      "},";
+  _server.sendContent(json);
 
   // Config node
-  json += "\"config\":{";
-  json += "\"battery_profile\":"         + String(cfg.batteryProfile) + ",";
-  json += "\"battery_profile_name\":\""  + String(batteryProfileToString((BatteryProfileType)cfg.batteryProfile)) + "\",";
-  json += "\"batteryProfile\":\""        + String(batteryProfileToString((BatteryProfileType)cfg.batteryProfile)) + "\",";
-  json += "\"batteryProfileName\":\""    + String(batteryProfileToString((BatteryProfileType)cfg.batteryProfile)) + "\",";
-  json += "\"batteryProfileId\":"        + String(cfg.batteryProfile) + ",";
-  json += "\"low_cut\":"                 + String(cfg.lowCutVoltage, 2) + ",";
-  json += "\"lowCut\":"                  + String(cfg.lowCutVoltage, 2) + ",";
-  json += "\"high_cut\":"                + String(cfg.highCutVoltage, 2) + ",";
-  json += "\"highCut\":"                 + String(cfg.highCutVoltage, 2) + ",";
-  json += "\"hysteresis\":"              + String(cfg.hysteresisVoltage, 2) + ",";
-  json += "\"charger_watt\":"            + String(cfg.chargerWatt, 0) + ",";
-  json += "\"charger_amps\":"            + String(cfg.chargerAmps, 1) + ",";
-  json += "\"kwh_rate_bdt\":"            + String(cfg.electricityRate, 1) + ",";
-  json += "\"voltage_calibration\":"     + String(cfg.voltageCalibration, 3) + ",";
-  json += "\"voltage_offset\":"          + String(cfg.voltageOffset, 2) + ",";
-  json += "\"charge_start_hour\":"       + String(cfg.chargeStartHour) + ",";
-  json += "\"chargeStartHour\":"         + String(cfg.chargeStartHour) + ",";
-  json += "\"start_hour\":"              + String(cfg.chargeStartHour) + ",";
-  json += "\"startHour\":"               + String(cfg.chargeStartHour) + ",";
-  json += "\"charge_start_minute\":"     + String(cfg.chargeStartMinute) + ",";
-  json += "\"chargeStartMinute\":"       + String(cfg.chargeStartMinute) + ",";
-  json += "\"start_minute\":"            + String(cfg.chargeStartMinute) + ",";
-  json += "\"startMinute\":"             + String(cfg.chargeStartMinute) + ",";
-  json += "\"charge_stop_hour\":"        + String(cfg.chargeStopHour) + ",";
-  json += "\"chargeStopHour\":"          + String(cfg.chargeStopHour) + ",";
-  json += "\"stop_hour\":"               + String(cfg.chargeStopHour) + ",";
-  json += "\"stopHour\":"                + String(cfg.chargeStopHour) + ",";
-  json += "\"charge_stop_minute\":"      + String(cfg.chargeStopMinute) + ",";
-  json += "\"chargeStopMinute\":"        + String(cfg.chargeStopMinute) + ",";
-  json += "\"stop_minute\":"             + String(cfg.chargeStopMinute) + ",";
-  json += "\"stopMinute\":"              + String(cfg.chargeStopMinute) + ",";
-  json += "\"schedule_enabled\":"        + String(cfg.scheduleEnabled ? "true" : "false") + ",";
-  json += "\"scheduleEnabled\":"         + String(cfg.scheduleEnabled ? "true" : "false") + ",";
-  json += "\"schedule_days\":"           + String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) + ",";
-  json += "\"scheduleDays\":"            + String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) + ",";
-  json += "\"scheduleDaysBitmask\":"     + String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) + ",";
-  json += "\"auto_mode\":"               + String(cfg.autoMode ? "true" : "false") + ",";
-  json += "\"autoMode\":"                + String(cfg.autoMode ? "true" : "false") + ",";
-  json += "\"solar_backup\":"            + String(cfg.solarBackupEnabled ? "true" : "false") + ",";
-  json += "\"solarBackup\":"             + String(cfg.solarBackupEnabled ? "true" : "false") + ",";
-  json += "\"ap_ssid\":\""               + String(cfg.apSsid) + "\",";
-  json += "\"device_name\":\""           + String(cfg.deviceName) + "\",";
-  json += "\"weather_lat\":"             + String(cfg.weatherLat, 4) + ",";
-  json += "\"weather_lon\":"             + String(cfg.weatherLon, 4) + ",";
-  json += "\"weather_sync_enabled\":"    + String(cfg.weatherSyncEnabled ? "true" : "false") + ",";
-  json += "\"timezone_offset\":"         + String(cfg.timezoneOffsetHours) + ",";
-  json += "\"updatedAt\":"               + String(cfg.updatedAt) + ",";
-  json += "\"updated_at\":"              + String(cfg.updatedAt) + ",";
-  json += "\"epoch\":"                   + String(timeMgr.getEpoch()) + ",";
-  json += "\"time_synced\":"             + String(timeMgr.isSynced() ? "true" : "false") + ",";
-  json += "\"formatted_time\":\""        + timeMgr.getFormattedTime() + "\",";
-  json += "\"formatted_time_12\":\""     + timeMgr.getFormattedTime12() + "\",";
-  json += "\"relay_active_low\":"        + String(cfg.relayActiveLow ? "true" : "false") + ",";
-  json += "\"relayActiveLow\":"         + String(cfg.relayActiveLow ? "true" : "false") + ",";
-  json += "\"device_id\":\""             + String(cfg.deviceId) + "\"},";
+  json = "\"config\":{";
+  json += "\"battery_profile\":" + String(cfg.batteryProfile) + ",";
+  json +=
+      "\"battery_profile_name\":\"" +
+      String(batteryProfileToString((BatteryProfileType)cfg.batteryProfile)) +
+      "\",";
+  json += "\"low_cut\":" + String(cfg.lowCutVoltage, 2) + ",";
+  json += "\"high_cut\":" + String(cfg.highCutVoltage, 2) + ",";
+  json += "\"hysteresis\":" + String(cfg.hysteresisVoltage, 2) + ",";
+  json += "\"charger_watt\":" + String(cfg.chargerWatt, 0) + ",";
+  json += "\"charger_amps\":" + String(cfg.chargerAmps, 1) + ",";
+  json += "\"kwh_rate_bdt\":" + String(cfg.electricityRate, 1) + ",";
+  json += "\"voltage_calibration\":" + String(cfg.voltageCalibration, 3) + ",";
+  json += "\"voltage_offset\":" + String(cfg.voltageOffset, 2) + ",";
+  json += "\"charge_start_hour\":" + String(cfg.chargeStartHour) + ",";
+  json += "\"charge_start_minute\":" + String(cfg.chargeStartMinute) + ",";
+  json += "\"charge_stop_hour\":" + String(cfg.chargeStopHour) + ",";
+  json += "\"charge_stop_minute\":" + String(cfg.chargeStopMinute) + ",";
+  json +=
+      "\"schedule_enabled\":" + String(cfg.scheduleEnabled ? "true" : "false") +
+      ",";
+  json += "\"schedule_days\":" +
+          String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) +
+          ",";
+  json += "\"auto_mode\":" + String(cfg.autoMode ? "true" : "false") + ",";
+  json +=
+      "\"solar_backup\":" + String(cfg.solarBackupEnabled ? "true" : "false") +
+      ",";
+  json += "\"ap_ssid\":\"" + String(cfg.apSsid) + "\",";
+  json += "\"device_name\":\"" + String(cfg.deviceName) + "\",";
+  json += "\"weather_lat\":" + String(cfg.weatherLat, 4) + ",";
+  json += "\"weather_lon\":" + String(cfg.weatherLon, 4) + ",";
+  json += "\"weather_sync_enabled\":" +
+          String(cfg.weatherSyncEnabled ? "true" : "false") + ",";
+  json += "\"timezone_offset\":" + String(cfg.timezoneOffsetHours) + ",";
+  json += "\"updatedAt\":" + String(cfg.updatedAt) + ",";
+  json += "\"epoch\":" + String(timeMgr.getEpoch()) + ",";
+  json +=
+      "\"time_synced\":" + String(timeMgr.isSynced() ? "true" : "false") + ",";
+  json += "\"formatted_time\":\"" + timeMgr.getFormattedTime() + "\",";
+  json += "\"formatted_time_12\":\"" + timeMgr.getFormattedTime12() + "\",";
+  json +=
+      "\"relay_active_low\":" + String(cfg.relayActiveLow ? "true" : "false") +
+      ",";
+  json += "\"device_id\":\"" + String(cfg.deviceId) + "\"},";
+  _server.sendContent(json);
 
   // Health node
-  json += "\"health\":{";
+  json = "\"health\":{";
   json += "\"status\":\"ok\",";
-  json += "\"uptime_seconds\":"          + String(nowSec) + ",";
-  json += "\"wifi_rssi\":"               + String(wifiMgr.getRssi()) + ",";
-  json += "\"free_heap\":"               + String(ESP.getFreeHeap()) + ",";
+  json += "\"uptime_seconds\":" + String(nowSec) + ",";
+  json += "\"wifi_rssi\":" + String(wifiMgr.getRssi()) + ",";
+  json += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
+  json += "\"mac\":\"" + WiFi.macAddress() + "\",";
   json += "\"firmware_version\":\"" FIRMWARE_VERSION "\"}}";
-
-  _server.sendHeader("Access-Control-Allow-Origin", "*");
-  _server.sendHeader("Cache-Control", "no-cache");
-  _server.sendHeader("Connection", "close");
-  _server.send(200, "application/json", json);
+  _server.sendContent(json);
+  _server.sendContent("");
 }
 
 void HttpServer::handleTelemetry() {
@@ -1174,49 +1513,61 @@ void HttpServer::handleRelayPost() {
     int idIdx = body.indexOf("\"commandId\":\"");
     if (idIdx != -1) {
       int endIdx = body.indexOf("\"", idIdx + 13);
-      if (endIdx != -1) cmdId = body.substring(idIdx + 13, endIdx);
+      if (endIdx != -1)
+        cmdId = body.substring(idIdx + 13, endIdx);
     }
     int srcIdx = body.indexOf("\"source\":\"");
     if (srcIdx != -1) {
       int endIdx = body.indexOf("\"", srcIdx + 10);
-      if (endIdx != -1) source = body.substring(srcIdx + 10, endIdx);
+      if (endIdx != -1)
+        source = body.substring(srcIdx + 10, endIdx);
     }
     int actIdx = body.indexOf("\"action\":\"");
     if (actIdx != -1) {
       int endIdx = body.indexOf("\"", actIdx + 10);
-      if (endIdx != -1) action = body.substring(actIdx + 10, endIdx);
+      if (endIdx != -1)
+        action = body.substring(actIdx + 10, endIdx);
     }
     action.toUpperCase();
-    if (action != "ON" && action != "OFF" && action != "TOGGLE" && action != "RELAY_ON" && action != "RELAY_OFF") {
-      if (body.indexOf("\"action\":\"ON\"") != -1 || body.indexOf("\"ON\"") != -1) action = "ON";
-      else if (body.indexOf("\"action\":\"OFF\"") != -1 || body.indexOf("\"OFF\"") != -1) action = "OFF";
-      else action = "TOGGLE";
+    if (action != "ON" && action != "OFF" && action != "TOGGLE" &&
+        action != "RELAY_ON" && action != "RELAY_OFF") {
+      if (body.indexOf("\"action\":\"ON\"") != -1 ||
+          body.indexOf("\"ON\"") != -1)
+        action = "ON";
+      else if (body.indexOf("\"action\":\"OFF\"") != -1 ||
+               body.indexOf("\"OFF\"") != -1)
+        action = "OFF";
+      else
+        action = "TOGGLE";
     }
   } else {
     if (_server.hasArg("action")) {
       action = _server.arg("action");
       action.toUpperCase();
     }
-    if (_server.hasArg("commandId")) cmdId = _server.arg("commandId");
-    if (_server.hasArg("source")) source = _server.arg("source");
+    if (_server.hasArg("commandId"))
+      cmdId = _server.arg("commandId");
+    if (_server.hasArg("source"))
+      source = _server.arg("source");
   }
 
   String msg;
-  CommandAck ack = cmdMgr.processCommand(cmdId, configMgr.get().deviceId, action, source, 0, 0, "", msg);
+  CommandAck ack = cmdMgr.processCommand(cmdId, configMgr.get().deviceId,
+                                         action, source, 0, 0, "", msg);
   bool success = (ack == ACK_EXECUTED || ack == ACK_DUPLICATE);
   if (success) {
     firebaseMgr.triggerImmediateSync();
   }
 
   String resp = "{";
-  resp += "\"success\":"     + String(success ? "true" : "false") + ",";
-  resp += "\"ack\":\""       + String(commandAckToString(ack)) + "\",";
+  resp += "\"success\":" + String(success ? "true" : "false") + ",";
+  resp += "\"ack\":\"" + String(commandAckToString(ack)) + "\",";
   resp += "\"commandId\":\"" + cmdId + "\",";
-  resp += "\"relay\":"       + String(relayCtrl.isOn() ? "true" : "false") + ",";
-  resp += "\"timestamp\":"   + String(timeMgr.getEpoch()) + ",";
-  resp += "\"source\":\""    + source + "\",";
-  resp += "\"action\":\""    + action + "\",";
-  resp += "\"message\":\""   + msg + "\"}";
+  resp += "\"relay\":" + String(relayCtrl.isOn() ? "true" : "false") + ",";
+  resp += "\"timestamp\":" + String(timeMgr.getEpoch()) + ",";
+  resp += "\"source\":\"" + source + "\",";
+  resp += "\"action\":\"" + action + "\",";
+  resp += "\"message\":\"" + msg + "\"}";
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
   _server.sendHeader("Connection", "close");
@@ -1225,6 +1576,8 @@ void HttpServer::handleRelayPost() {
 
 void HttpServer::handleCommandPost() {
   _lastInteractionTime = millis();
+  _server.sendHeader("Connection", "close");
+  _server.sendHeader("Cache-Control", "no-cache");
   String cmdId = "CMD-" + String(millis());
   String targetDevId = configMgr.get().deviceId;
   String action = "";
@@ -1238,43 +1591,50 @@ void HttpServer::handleCommandPost() {
     int idIdx = body.indexOf("\"commandId\":\"");
     if (idIdx != -1) {
       int endIdx = body.indexOf("\"", idIdx + 13);
-      if (endIdx != -1) cmdId = body.substring(idIdx + 13, endIdx);
+      if (endIdx != -1)
+        cmdId = body.substring(idIdx + 13, endIdx);
     }
     int devIdx = body.indexOf("\"deviceId\":\"");
     if (devIdx != -1) {
       int endIdx = body.indexOf("\"", devIdx + 12);
-      if (endIdx != -1) targetDevId = body.substring(devIdx + 12, endIdx);
+      if (endIdx != -1)
+        targetDevId = body.substring(devIdx + 12, endIdx);
     }
     int actIdx = body.indexOf("\"action\":\"");
     if (actIdx != -1) {
       int endIdx = body.indexOf("\"", actIdx + 10);
-      if (endIdx != -1) action = body.substring(actIdx + 10, endIdx);
+      if (endIdx != -1)
+        action = body.substring(actIdx + 10, endIdx);
     }
   }
 
   String msg;
-  CommandAck ack = cmdMgr.processCommand(cmdId, targetDevId, action, source, createdAt, expiresAt, payload, msg);
+  CommandAck ack = cmdMgr.processCommand(cmdId, targetDevId, action, source,
+                                         createdAt, expiresAt, payload, msg);
   bool success = (ack == ACK_EXECUTED || ack == ACK_DUPLICATE);
   if (success) {
     firebaseMgr.triggerImmediateSync();
   }
 
   String resp = "{";
-  resp += "\"success\":"     + String(success ? "true" : "false") + ",";
-  resp += "\"ack\":\""       + String(commandAckToString(ack)) + "\",";
+  resp += "\"success\":" + String(success ? "true" : "false") + ",";
+  resp += "\"ack\":\"" + String(commandAckToString(ack)) + "\",";
   resp += "\"commandId\":\"" + cmdId + "\",";
-  resp += "\"message\":\""   + msg + "\"}";
+  resp += "\"message\":\"" + msg + "\"}";
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
   _server.send(200, "application/json", resp);
 }
 
 void HttpServer::handleControlGet() {
   _lastInteractionTime = millis();
   _server.sendHeader("Access-Control-Allow-Origin", "*");
-  
+  _server.sendHeader("Connection", "close");
+  _server.sendHeader("Cache-Control", "no-cache");
+
   bool changed = false;
-  DeviceConfig& cfg = configMgr.get();
+  DeviceConfig &cfg = configMgr.get();
 
   if (_server.hasArg("auto")) {
     bool en = _server.arg("auto").toInt() == 1;
@@ -1282,7 +1642,7 @@ void HttpServer::handleControlGet() {
     chargingCtrl.setOperatingMode(en ? MODE_AUTO : MODE_MANUAL);
     changed = true;
   }
-  
+
   if (_server.hasArg("relay")) {
     int st = _server.arg("relay").toInt();
     String reject;
@@ -1293,12 +1653,14 @@ void HttpServer::handleControlGet() {
     configMgr.save();
   }
 
-  _server.send(200, "application/json", "{\"success\":true,\"message\":\"Control applied\"}");
+  _server.send(200, "application/json",
+               "{\"success\":true,\"message\":\"Control applied\"}");
 }
 
 void HttpServer::handleConfigGet() {
   _lastInteractionTime = millis();
   _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
   _server.sendHeader("Cache-Control", "no-cache");
   _server.send(200, "application/json", configMgr.toJson(true));
 }
@@ -1310,13 +1672,16 @@ void HttpServer::handleConfigPost() {
   bool ok = configMgr.fromJson(json, err);
 
   if (ok) {
-    if (json.indexOf("schedule") != -1 || json.indexOf("start_hour") != -1 || json.indexOf("startHour") != -1) {
+    if (json.indexOf("schedule") != -1 || json.indexOf("start_hour") != -1 ||
+        json.indexOf("startHour") != -1) {
       chargingCtrl.resetScheduleSession();
     }
     configMgr.save();
     relayCtrl.reapplyHardware();
     firebaseMgr.triggerFullSync();
-    String resp = "{\"success\":true,\"configVersion\":" + String(configMgr.get().configVersion) + ",\"updatedAt\":" + String(configMgr.get().updatedAt) + "}";
+    String resp = "{\"success\":true,\"configVersion\":" +
+                  String(configMgr.get().configVersion) +
+                  ",\"updatedAt\":" + String(configMgr.get().updatedAt) + "}";
     _server.sendHeader("Access-Control-Allow-Origin", "*");
     _server.sendHeader("Connection", "close");
     _server.send(200, "application/json", resp);
@@ -1330,7 +1695,7 @@ void HttpServer::handleConfigPost() {
 
 void HttpServer::handleSchedulePost() {
   _lastInteractionTime = millis();
-  DeviceConfig& cfg = configMgr.get();
+  DeviceConfig &cfg = configMgr.get();
   bool changed = false;
 
   // 1. Check for JSON body
@@ -1345,50 +1710,82 @@ void HttpServer::handleSchedulePost() {
   // 2. Parse Form or Query args (overrides or complements JSON)
   if (_server.hasArg("start_hour")) {
     int h = _server.arg("start_hour").toInt();
-    if (h >= 0 && h <= 23) { cfg.chargeStartHour = h; changed = true; }
+    if (h >= 0 && h <= 23) {
+      cfg.chargeStartHour = h;
+      changed = true;
+    }
   } else if (_server.hasArg("charge_start_hour")) {
     int h = _server.arg("charge_start_hour").toInt();
-    if (h >= 0 && h <= 23) { cfg.chargeStartHour = h; changed = true; }
+    if (h >= 0 && h <= 23) {
+      cfg.chargeStartHour = h;
+      changed = true;
+    }
   }
 
   if (_server.hasArg("start_minute")) {
     int m = _server.arg("start_minute").toInt();
-    if (m >= 0 && m <= 59) { cfg.chargeStartMinute = m; changed = true; }
+    if (m >= 0 && m <= 59) {
+      cfg.chargeStartMinute = m;
+      changed = true;
+    }
   } else if (_server.hasArg("charge_start_minute")) {
     int m = _server.arg("charge_start_minute").toInt();
-    if (m >= 0 && m <= 59) { cfg.chargeStartMinute = m; changed = true; }
+    if (m >= 0 && m <= 59) {
+      cfg.chargeStartMinute = m;
+      changed = true;
+    }
   }
 
   if (_server.hasArg("stop_hour")) {
     int h = _server.arg("stop_hour").toInt();
-    if (h >= 0 && h <= 23) { cfg.chargeStopHour = h; changed = true; }
+    if (h >= 0 && h <= 23) {
+      cfg.chargeStopHour = h;
+      changed = true;
+    }
   } else if (_server.hasArg("charge_stop_hour")) {
     int h = _server.arg("charge_stop_hour").toInt();
-    if (h >= 0 && h <= 23) { cfg.chargeStopHour = h; changed = true; }
+    if (h >= 0 && h <= 23) {
+      cfg.chargeStopHour = h;
+      changed = true;
+    }
   }
 
   if (_server.hasArg("stop_minute")) {
     int m = _server.arg("stop_minute").toInt();
-    if (m >= 0 && m <= 59) { cfg.chargeStopMinute = m; changed = true; }
+    if (m >= 0 && m <= 59) {
+      cfg.chargeStopMinute = m;
+      changed = true;
+    }
   } else if (_server.hasArg("charge_stop_minute")) {
     int m = _server.arg("charge_stop_minute").toInt();
-    if (m >= 0 && m <= 59) { cfg.chargeStopMinute = m; changed = true; }
+    if (m >= 0 && m <= 59) {
+      cfg.chargeStopMinute = m;
+      changed = true;
+    }
   }
 
   if (_server.hasArg("enabled")) {
-    cfg.scheduleEnabled = (_server.arg("enabled") == "1" || _server.arg("enabled") == "true");
+    cfg.scheduleEnabled =
+        (_server.arg("enabled") == "1" || _server.arg("enabled") == "true");
     changed = true;
   } else if (_server.hasArg("schedule_enabled")) {
-    cfg.scheduleEnabled = (_server.arg("schedule_enabled") == "1" || _server.arg("schedule_enabled") == "true");
+    cfg.scheduleEnabled = (_server.arg("schedule_enabled") == "1" ||
+                           _server.arg("schedule_enabled") == "true");
     changed = true;
   }
 
   if (_server.hasArg("schedule_days")) {
     int days = _server.arg("schedule_days").toInt();
-    if (days > 0 && days <= 127) { cfg.scheduleDaysBitmask = days; changed = true; }
+    if (days > 0 && days <= 127) {
+      cfg.scheduleDaysBitmask = days;
+      changed = true;
+    }
   } else if (_server.hasArg("schedule_days_bitmask")) {
     int days = _server.arg("schedule_days_bitmask").toInt();
-    if (days > 0 && days <= 127) { cfg.scheduleDaysBitmask = days; changed = true; }
+    if (days > 0 && days <= 127) {
+      cfg.scheduleDaysBitmask = days;
+      changed = true;
+    }
   }
 
   if (_server.hasArg("timezone_offset")) {
@@ -1400,13 +1797,15 @@ void HttpServer::handleSchedulePost() {
     }
   }
 
-  // 3. Time synchronization via schedule call (guarantees clock is set even in AP mode without internet!)
+  // 3. Time synchronization via schedule call (guarantees clock is set even in
+  // AP mode without internet!)
   uint32_t epoch = 0;
   if (_server.hasArg("epoch")) {
     epoch = (uint32_t)_server.arg("epoch").toInt();
   } else if (_server.hasArg("timestamp")) {
     double ts = _server.arg("timestamp").toDouble();
-    if (ts > 1000000000000.0) ts /= 1000.0;
+    if (ts > 1000000000000.0)
+      ts /= 1000.0;
     epoch = (uint32_t)ts;
   }
   if (epoch > 1000000000L) {
@@ -1414,10 +1813,16 @@ void HttpServer::handleSchedulePost() {
   }
   if (_server.hasArg("updatedAt")) {
     uint32_t u = (uint32_t)_server.arg("updatedAt").toInt();
-    if (u > 0) { cfg.updatedAt = u; changed = true; }
+    if (u > 0) {
+      cfg.updatedAt = u;
+      changed = true;
+    }
   } else if (_server.hasArg("updated_at")) {
     uint32_t u = (uint32_t)_server.arg("updated_at").toInt();
-    if (u > 0) { cfg.updatedAt = u; changed = true; }
+    if (u > 0) {
+      cfg.updatedAt = u;
+      changed = true;
+    }
   } else if (epoch > 1000000000L) {
     cfg.updatedAt = epoch;
     changed = true;
@@ -1436,24 +1841,35 @@ void HttpServer::handleSchedulePost() {
 
   String resp = "{";
   resp += "\"success\":true,";
-  resp += "\"updatedAt\":"          + String(cfg.updatedAt) + ",";
-  resp += "\"schedule_enabled\":"   + String(cfg.scheduleEnabled ? "true" : "false") + ",";
-  resp += "\"scheduleEnabled\":"    + String(cfg.scheduleEnabled ? "true" : "false") + ",";
-  resp += "\"schedule_days\":"      + String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) + ",";
-  resp += "\"scheduleDays\":"       + String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) + ",";
-  resp += "\"scheduleDaysBitmask\":"+ String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) + ",";
-  resp += "\"start_hour\":"         + String(cfg.chargeStartHour) + ",";
-  resp += "\"chargeStartHour\":"    + String(cfg.chargeStartHour) + ",";
-  resp += "\"start_minute\":"       + String(cfg.chargeStartMinute) + ",";
-  resp += "\"chargeStartMinute\":"  + String(cfg.chargeStartMinute) + ",";
-  resp += "\"stop_hour\":"          + String(cfg.chargeStopHour) + ",";
-  resp += "\"chargeStopHour\":"     + String(cfg.chargeStopHour) + ",";
-  resp += "\"stop_minute\":"        + String(cfg.chargeStopMinute) + ",";
-  resp += "\"chargeStopMinute\":"   + String(cfg.chargeStopMinute) + ",";
-  resp += "\"timezone_offset\":"    + String(cfg.timezoneOffsetHours) + ",";
-  resp += "\"epoch\":"              + String(timeMgr.getEpoch()) + ",";
-  resp += "\"formatted_time\":\""   + timeMgr.getFormattedTime() + "\",";
-  resp += "\"time_synced\":"        + String(timeMgr.isSynced() ? "true" : "false") + "}";
+  resp += "\"updatedAt\":" + String(cfg.updatedAt) + ",";
+  resp +=
+      "\"schedule_enabled\":" + String(cfg.scheduleEnabled ? "true" : "false") +
+      ",";
+  resp +=
+      "\"scheduleEnabled\":" + String(cfg.scheduleEnabled ? "true" : "false") +
+      ",";
+  resp += "\"schedule_days\":" +
+          String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) +
+          ",";
+  resp += "\"scheduleDays\":" +
+          String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) +
+          ",";
+  resp += "\"scheduleDaysBitmask\":" +
+          String(cfg.scheduleDaysBitmask == 0 ? 127 : cfg.scheduleDaysBitmask) +
+          ",";
+  resp += "\"start_hour\":" + String(cfg.chargeStartHour) + ",";
+  resp += "\"chargeStartHour\":" + String(cfg.chargeStartHour) + ",";
+  resp += "\"start_minute\":" + String(cfg.chargeStartMinute) + ",";
+  resp += "\"chargeStartMinute\":" + String(cfg.chargeStartMinute) + ",";
+  resp += "\"stop_hour\":" + String(cfg.chargeStopHour) + ",";
+  resp += "\"chargeStopHour\":" + String(cfg.chargeStopHour) + ",";
+  resp += "\"stop_minute\":" + String(cfg.chargeStopMinute) + ",";
+  resp += "\"chargeStopMinute\":" + String(cfg.chargeStopMinute) + ",";
+  resp += "\"timezone_offset\":" + String(cfg.timezoneOffsetHours) + ",";
+  resp += "\"epoch\":" + String(timeMgr.getEpoch()) + ",";
+  resp += "\"formatted_time\":\"" + timeMgr.getFormattedTime() + "\",";
+  resp +=
+      "\"time_synced\":" + String(timeMgr.isSynced() ? "true" : "false") + "}";
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
   _server.sendHeader("Connection", "close");
@@ -1462,7 +1878,9 @@ void HttpServer::handleSchedulePost() {
 
 void HttpServer::handleTimePost() {
   _lastInteractionTime = millis();
-  const DeviceConfig& cfg = configMgr.get();
+  _server.sendHeader("Connection", "close");
+  _server.sendHeader("Cache-Control", "no-cache");
+  const DeviceConfig &cfg = configMgr.get();
   uint32_t epoch = 0;
   int tz = cfg.timezoneOffsetHours;
 
@@ -1477,7 +1895,8 @@ void HttpServer::handleTimePost() {
     epoch = (uint32_t)_server.arg("epoch").toInt();
   } else if (_server.hasArg("timestamp")) {
     double ts = _server.arg("timestamp").toDouble();
-    if (ts > 1000000000000.0) ts /= 1000.0;
+    if (ts > 1000000000000.0)
+      ts /= 1000.0;
     epoch = (uint32_t)ts;
   }
   if (_server.hasArg("timezone_offset")) {
@@ -1490,45 +1909,60 @@ void HttpServer::handleTimePost() {
 
   String resp = "{";
   resp += "\"success\":true,";
-  resp += "\"epoch\":"            + String(timeMgr.getEpoch()) + ",";
+  resp += "\"epoch\":" + String(timeMgr.getEpoch()) + ",";
   resp += "\"formatted_time\":\"" + timeMgr.getFormattedTime() + "\",";
-  resp += "\"time_synced\":"      + String(timeMgr.isSynced() ? "true" : "false") + "}";
+  resp +=
+      "\"time_synced\":" + String(timeMgr.isSynced() ? "true" : "false") + "}";
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
   _server.send(200, "application/json", resp);
 }
 
 void HttpServer::handleEmergencyStopPost() {
   _lastInteractionTime = millis();
+  _server.sendHeader("Connection", "close");
+  _server.sendHeader("Cache-Control", "no-cache");
   String action = _server.hasArg("action") ? _server.arg("action") : "stop";
   bool stop = (action != "resume");
   chargingCtrl.setEmergencyStop(stop);
 
-  String resp = "{\"success\":true,\"emergencyStop\":" + String(stop ? "true" : "false") + "}";
+  String resp =
+      "{\"success\":true,\"emergencyStop\":" + String(stop ? "true" : "false") +
+      "}";
   _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
   _server.send(200, "application/json", resp);
 }
 
 void HttpServer::handleMaintenancePost() {
   _lastInteractionTime = millis();
+  _server.sendHeader("Connection", "close");
+  _server.sendHeader("Cache-Control", "no-cache");
   String action = _server.hasArg("action") ? _server.arg("action") : "enable";
   bool enable = (action != "disable");
   chargingCtrl.setMaintenanceMode(enable);
 
-  String resp = "{\"success\":true,\"maintenanceMode\":" + String(enable ? "true" : "false") + "}";
+  String resp = "{\"success\":true,\"maintenanceMode\":" +
+                String(enable ? "true" : "false") + "}";
   _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
   _server.send(200, "application/json", resp);
 }
 
 void HttpServer::handleSessionsGet() {
   _server.sendHeader("Access-Control-Allow-Origin", "*");
-  _server.send(200, "application/json", billingEstimator.getOfflineSessionsJson());
+  _server.sendHeader("Connection", "close");
+  _server.send(200, "application/json",
+               billingEstimator.getOfflineSessionsJson());
 }
 
 void HttpServer::handleSessionsAck() {
   billingEstimator.acknowledgeSessions();
   _server.sendHeader("Access-Control-Allow-Origin", "*");
-  _server.send(200, "application/json", "{\"success\":true,\"message\":\"Sessions cleared\"}");
+  _server.sendHeader("Connection", "close");
+  _server.send(200, "application/json",
+               "{\"success\":true,\"message\":\"Sessions cleared\"}");
 }
 
 void HttpServer::handleDiagnosticsRelay() {
@@ -1542,6 +1976,7 @@ void HttpServer::handleDiagnosticsRelay() {
   json += "\"result\":\"" + String(relayCtrl.getDiagnosticStatus()) + "\"}";
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
   _server.send(200, "application/json", json);
 }
 
@@ -1555,12 +1990,15 @@ void HttpServer::handleReset() {
     int typeIdx = body.indexOf("\"type\":\"");
     if (typeIdx != -1) {
       int endIdx = body.indexOf("\"", typeIdx + 8);
-      if (endIdx != -1) type = body.substring(typeIdx + 8, endIdx);
+      if (endIdx != -1)
+        type = body.substring(typeIdx + 8, endIdx);
     }
   }
 
   _server.sendHeader("Access-Control-Allow-Origin", "*");
-  _server.send(200, "application/json", "{\"success\":true,\"action\":\"" + type + "\"}");
+  _server.sendHeader("Connection", "close");
+  _server.send(200, "application/json",
+               "{\"success\":true,\"action\":\"" + type + "\"}");
 
   relayCtrl.forceOff("RESET_REQUEST");
   delay(300);
@@ -1580,25 +2018,39 @@ void HttpServer::handleReset() {
 
 void HttpServer::handleScanWifi() {
   _lastInteractionTime = millis();
-  int n = WiFi.scanNetworks(false, true); // true = include hidden networks
-  String json = "[";
-  for (int i = 0; i < n; i++) {
-    if (i > 0) json += ",";
-    int q = 2 * (WiFi.RSSI(i) + 100);
-    if (q > 100) q = 100; if (q < 0) q = 0;
-    String enc = (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? "OPEN" : "SECURED";
-    String sName = WiFi.SSID(i);
-    bool isHidden = (sName.length() == 0);
-    if (isHidden) sName = "[Hidden Network - Ch " + String(WiFi.channel(i)) + "]";
-    json += "{\"ssid\":\"" + sName + "\",\"quality\":" + String(q) + ",\"security\":\"" + enc + "\",\"hidden\":" + (isHidden ? "true" : "false") + "}";
-  }
-  json += "]";
-  WiFi.scanDelete();
-  if (apMgr.isActive()) {
-    wifi_set_channel(apMgr.getChannel());
-  }
   _server.sendHeader("Access-Control-Allow-Origin", "*");
-  _server.send(200, "application/json", json);
+  _server.sendHeader("Cache-Control", "no-cache");
+  _server.sendHeader("Connection", "close");
+
+  bool forceRefresh = _server.hasArg("refresh");
+
+  // If scan is currently running in background
+  if (_scanInProgress || WiFi.scanComplete() == WIFI_SCAN_RUNNING) {
+    if (_cachedScanJson.length() > 2) {
+      _server.send(200, "application/json", _cachedScanJson);
+      return;
+    }
+    _server.send(200, "application/json", "{\"status\":\"scanning\"}");
+    return;
+  }
+
+  // In Mode 2 (Connected to Router in STA mode), auto-scan is strictly OFF.
+  // Scan ONLY starts if user explicitly requested refresh (?refresh=1).
+  if (forceRefresh ||
+      (!wifiMgr.isConnected() &&
+       (_cachedScanJson == "[]" || _cachedScanJson.length() == 0))) {
+    triggerAsyncScan();
+    if (_cachedScanJson.length() > 2) {
+      _server.send(200, "application/json", _cachedScanJson);
+      return;
+    }
+    _server.send(200, "application/json", "{\"status\":\"scanning\"}");
+    return;
+  }
+
+  // Instant response with cached network list (<2ms, 0 radio channel
+  // disruption)
+  _server.send(200, "application/json", _cachedScanJson);
 }
 
 void HttpServer::handleSaveCredentials() {
@@ -1612,23 +2064,42 @@ void HttpServer::handleSaveCredentials() {
     if (sIdx != -1) {
       int q1 = body.indexOf("\"", sIdx + 7);
       int q2 = body.indexOf("\"", q1 + 1);
-      if (q1 != -1 && q2 != -1) s = body.substring(q1 + 1, q2);
+      if (q1 != -1 && q2 != -1)
+        s = body.substring(q1 + 1, q2);
     }
     int pIdx = body.indexOf("\"pass\":");
     if (pIdx != -1) {
       int q1 = body.indexOf("\"", pIdx + 7);
       int q2 = body.indexOf("\"", q1 + 1);
-      if (q1 != -1 && q2 != -1) p = body.substring(q1 + 1, q2);
+      if (q1 != -1 && q2 != -1)
+        p = body.substring(q1 + 1, q2);
     }
   }
 
+  s.trim();
+  p.trim();
+
+  if (s.length() == 0) {
+    _server.sendHeader("Access-Control-Allow-Origin", "*");
+    _server.sendHeader("Connection", "close");
+    _server.send(400, "application/json",
+                 "{\"success\":false,\"error\":\"SSID cannot be empty\"}");
+    Serial.println(F("[HttpServer] Wi-Fi save rejected: empty SSID"));
+    return;
+  }
+
+  Serial.printf("[HttpServer] Wi-Fi save accepted: SSID='%s'\n", s.c_str());
+
   _server.sendHeader("Access-Control-Allow-Origin", "*");
   _server.sendHeader("Connection", "close");
-  _server.send(200, "application/json", "{\"success\":true,\"message\":\"Credentials saved. Connecting...\"}");
+  _server.send(
+      200, "application/json",
+      "{\"success\":true,\"message\":\"Credentials saved. Connecting...\"}");
   unsigned long flushStart = millis();
-  while (millis() - flushStart < 600) {
+  while (millis() - flushStart < 500) {
     _server.handleClient();
     delay(10);
+    ESP.wdtFeed();
     yield();
   }
   wifiMgr.connectNew(s.c_str(), p.c_str());
@@ -1636,26 +2107,35 @@ void HttpServer::handleSaveCredentials() {
 
 void HttpServer::handleNotFound() {
   _lastInteractionTime = millis();
+  _server.sendHeader("Access-Control-Allow-Origin", "*");
+  _server.sendHeader("Connection", "close");
+
   if (_server.method() == HTTP_OPTIONS) {
-    _server.sendHeader("Access-Control-Allow-Origin", "*");
     _server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
     _server.sendHeader("Access-Control-Allow-Headers", "*");
     _server.send(204);
     return;
   }
+
   String uri = _server.uri();
-  if (uri == "/favicon.ico" || uri.startsWith("/generate_204") || uri.startsWith("/api/")) {
-    _server.sendHeader("Access-Control-Allow-Origin", "*");
+  String host = _server.hostHeader();
+
+  // Known probes or missing static assets -> fast 404 with socket close
+  if (uri == "/favicon.ico" || uri.startsWith("/generate_204") ||
+      uri.startsWith("/api/")) {
     _server.send(404, "text/plain", "Not Found");
     return;
   }
-  bool isApClient = (_server.client().remoteIP()[2] == 4 || apMgr.isSetupMode());
-  if (isApClient) {
-    _server.sendHeader("Access-Control-Allow-Origin", "*");
-    _server.sendHeader("Location", "http://" + WiFi.softAPIP().toString() + "/", true);
-    _server.send(302, "text/plain", "Captive Portal Redirect");
+
+  // Only redirect actual browser GET navigations intended for external websites
+  // in SoftAP mode
+  bool isAp = apMgr.isActive();
+  if (isAp && _server.method() == HTTP_GET && !host.startsWith("192.168.4.1") &&
+      !host.startsWith("smartcontroller")) {
+    _server.sendHeader("Location", "http://192.168.4.1/", true);
+    _server.send(302, "text/plain", "Captive Redirect");
     return;
   }
-  _server.sendHeader("Access-Control-Allow-Origin", "*");
+
   _server.send(404, "text/plain", "Not Found");
 }

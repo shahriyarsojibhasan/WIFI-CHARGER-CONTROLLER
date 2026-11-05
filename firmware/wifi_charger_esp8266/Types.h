@@ -28,6 +28,8 @@ const float MIN_VALID_VOLTAGE        = 2.0f;  // Below this, battery/sensor disc
 #define DEFAULT_AP_SSID        "Smart-Charger"
 #define DEFAULT_AP_PASS        "12345678"
 #define SETUP_AP_SSID          "Smart-Charger-Setup"
+#define DEFAULT_WIFI_SSID      "NO NET"
+#define DEFAULT_WIFI_PASS      "09999999"
 #define DEFAULT_MDNS_HOST      "smartcontroller"
 #define UDP_DISCOVERY_PORT     8266
 #define MAX_OFFLINE_SESSIONS   10

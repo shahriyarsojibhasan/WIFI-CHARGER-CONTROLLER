@@ -32,6 +32,7 @@ private:
   void pollCommands();
   
   WiFiClientSecure _wifiClient;
+  BearSSL::Session _session;
   HTTPClient       _httpClient;
 };
 

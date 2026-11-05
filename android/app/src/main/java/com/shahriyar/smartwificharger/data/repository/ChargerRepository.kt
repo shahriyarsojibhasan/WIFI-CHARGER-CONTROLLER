@@ -517,131 +517,37 @@ class ChargerRepository(
     }
 
     private suspend fun saveToRoomDatabase() {
-        database.deviceDao().insertOrUpdate(
-            DeviceEntity(
-                deviceId = deviceId,
-                name = cachedConfig.deviceName,
-                ipAddress = cachedTelemetry.deviceIp,
-                firmwareVersion = "5.2.0-PROD",
-                lastSeen = System.currentTimeMillis()
-            )
-        )
-        // Device operational state is strictly live/realtime from firmware.
-        // No offline state snapshot is persisted to ensure zero state divergence.
-        database.chargerConfigDao().insertOrUpdate(
-            ChargerConfigEntity(
-                deviceId = deviceId,
-                batteryProfile = cachedConfig.batteryProfile,
-                scheduleDaysBitmask = cachedConfig.scheduleDaysBitmask,
-                lowCut = cachedConfig.lowCut,
-                highCut = cachedConfig.highCut,
-                hysteresis = cachedConfig.hysteresis,
-                chargerWatt = cachedConfig.chargerWatt,
-                chargerAmps = cachedConfig.chargerAmps,
-                kwhRateBdt = cachedConfig.kwhRateBdt,
-                voltageCalibrationOffset = cachedConfig.voltageCalibrationOffset,
-                voltageCalibrationFactor = cachedConfig.voltageCalibrationFactor,
-                chargeStartHour = cachedConfig.chargeStartHour,
-                chargeStartMinute = cachedConfig.chargeStartMinute,
-                chargeStopHour = cachedConfig.chargeStopHour,
-                chargeStopMinute = cachedConfig.chargeStopMinute,
-                scheduleEnabled = cachedConfig.scheduleEnabled,
-                autoModeEnabled = cachedConfig.autoModeEnabled,
-                solarBackupEnabled = cachedConfig.solarBackupEnabled,
-                apSsid = cachedConfig.apSsid,
-                apPassword = cachedConfig.apPassword,
-                timezoneOffsetHours = cachedConfig.timezoneOffsetHours,
-                lastModified = cachedConfig.updatedAt.takeIf { it > 0 } ?: System.currentTimeMillis()
-            )
-        )
+        // STRICT BILL-ONLY LOCAL PERSISTENCE:
+        // Operational telemetry, state, and device config are strictly live from firmware/Firebase.
+        // Room database stores ONLY billing entities (BillingSummaryEntity, ChargingSessionEntity, DailyBillEntity).
+        // This eliminates SQLite write thrashing on every poll and prevents stale state divergence.
     }
 
     private suspend fun loadFromRoomDatabase() {
-        // Operational telemetry (voltage, relay, schedule recovery countdowns) is strictly firmware-driven
-        // and must NEVER be restored from stale offline Room DB state.
-        val configEntity = database.chargerConfigDao().getConfig(deviceId)
+        // Operational telemetry, state, and device config are kept 100% realtime from the active firmware transport.
+        // AppPreferences provides initial fallback defaults until the live device frame is received.
         val prefs = com.shahriyar.smartwificharger.data.prefs.AppPreferences.getInstance(context)
-        if (configEntity != null) {
-            val resolvedProfile = when {
-                prefs.batteryProfile.isNotBlank() && prefs.batteryProfile != "LEAD_ACID_12V" -> prefs.batteryProfile
-                configEntity.batteryProfile.isNotBlank() && configEntity.batteryProfile != "LEAD_ACID_12V" -> configEntity.batteryProfile
-                prefs.batteryProfile.isNotBlank() -> prefs.batteryProfile
-                else -> "5V"
-            }
-            val resolvedDays = when {
-                prefs.scheduleDaysBitmask != 0 -> prefs.scheduleDaysBitmask
-                configEntity.scheduleDaysBitmask != 0 -> configEntity.scheduleDaysBitmask
-                else -> 127
-            }
-            val resolvedSchedule = prefs.scheduleEnabled || configEntity.scheduleEnabled
-            val resolvedAuto = prefs.autoModeEnabled || configEntity.autoModeEnabled
-            val resolvedSolar = prefs.solarBackupEnabled || configEntity.solarBackupEnabled
-
-            cachedConfig = cachedConfig.copy(
-                batteryProfile = com.shahriyar.smartwificharger.data.connection.normalizeBatteryProfileName(resolvedProfile),
-                scheduleDaysBitmask = resolvedDays,
-                lowCut = if (resolvedProfile == "5V" && configEntity.lowCut > 10.0f) 4.2f else configEntity.lowCut,
-                highCut = if (resolvedProfile == "5V" && configEntity.highCut > 10.0f) 5.5f else configEntity.highCut,
-                hysteresis = if (resolvedProfile == "5V" && configEntity.hysteresis > 0.2f) 0.15f else configEntity.hysteresis,
-                chargerWatt = configEntity.chargerWatt,
-                chargerAmps = configEntity.chargerAmps,
-                kwhRateBdt = configEntity.kwhRateBdt,
-                chargeStartHour = configEntity.chargeStartHour,
-                chargeStartMinute = configEntity.chargeStartMinute,
-                chargeStopHour = configEntity.chargeStopHour,
-                chargeStopMinute = configEntity.chargeStopMinute,
-                scheduleEnabled = resolvedSchedule,
-                autoModeEnabled = resolvedAuto,
-                solarBackupEnabled = resolvedSolar,
-                apSsid = configEntity.apSsid,
-                apPassword = configEntity.apPassword,
-                timezoneOffsetHours = configEntity.timezoneOffsetHours,
-                weatherLat = prefs.weatherLat,
-                weatherLon = prefs.weatherLon,
-                weatherSyncEnabled = prefs.weatherSyncEnabled,
-                updatedAt = normalizeToEpochSeconds(configEntity.lastModified)
-            )
-            // Ensure AppPreferences always mirrors the latest stored Room config
-            try {
-                prefs.batteryProfile = cachedConfig.batteryProfile
-                prefs.lowCutVoltage = cachedConfig.lowCut
-                prefs.highCutVoltage = cachedConfig.highCut
-                prefs.hysteresisVoltage = cachedConfig.hysteresis
-                prefs.estimatedCurrentAmps = cachedConfig.chargerAmps
-                prefs.pricePerKwhBdt = cachedConfig.kwhRateBdt
-                prefs.chargeStartHour = cachedConfig.chargeStartHour
-                prefs.chargeStartMinute = cachedConfig.chargeStartMinute
-                prefs.chargeStopHour = cachedConfig.chargeStopHour
-                prefs.chargeStopMinute = cachedConfig.chargeStopMinute
-                prefs.scheduleEnabled = cachedConfig.scheduleEnabled
-                prefs.scheduleDaysBitmask = cachedConfig.scheduleDaysBitmask
-                prefs.autoModeEnabled = cachedConfig.autoModeEnabled
-                prefs.solarBackupEnabled = cachedConfig.solarBackupEnabled
-                prefs.weatherSyncEnabled = cachedConfig.weatherSyncEnabled
-            } catch (_: Exception) {}
-        } else {
-            cachedConfig = cachedConfig.copy(
-                batteryProfile = com.shahriyar.smartwificharger.data.connection.normalizeBatteryProfileName(
-                    prefs.batteryProfile.ifBlank { "5V" }
-                ),
-                lowCut = prefs.lowCutVoltage,
-                highCut = prefs.highCutVoltage,
-                hysteresis = prefs.hysteresisVoltage,
-                chargerAmps = prefs.estimatedCurrentAmps,
-                kwhRateBdt = prefs.pricePerKwhBdt,
-                chargeStartHour = prefs.chargeStartHour,
-                chargeStartMinute = prefs.chargeStartMinute,
-                chargeStopHour = prefs.chargeStopHour,
-                chargeStopMinute = prefs.chargeStopMinute,
-                scheduleEnabled = prefs.scheduleEnabled,
-                scheduleDaysBitmask = if (prefs.scheduleDaysBitmask == 0) 127 else prefs.scheduleDaysBitmask,
-                autoModeEnabled = prefs.autoModeEnabled,
-                solarBackupEnabled = prefs.solarBackupEnabled,
-                weatherLat = prefs.weatherLat,
-                weatherLon = prefs.weatherLon,
-                weatherSyncEnabled = prefs.weatherSyncEnabled
-            )
-        }
+        cachedConfig = cachedConfig.copy(
+            batteryProfile = com.shahriyar.smartwificharger.data.connection.normalizeBatteryProfileName(
+                prefs.batteryProfile.ifBlank { "LEAD_ACID_CONSERVATIVE" }
+            ),
+            lowCut = prefs.lowCutVoltage,
+            highCut = prefs.highCutVoltage,
+            hysteresis = prefs.hysteresisVoltage,
+            chargerAmps = prefs.estimatedCurrentAmps,
+            kwhRateBdt = prefs.pricePerKwhBdt,
+            chargeStartHour = prefs.chargeStartHour,
+            chargeStartMinute = prefs.chargeStartMinute,
+            chargeStopHour = prefs.chargeStopHour,
+            chargeStopMinute = prefs.chargeStopMinute,
+            scheduleEnabled = prefs.scheduleEnabled,
+            scheduleDaysBitmask = if (prefs.scheduleDaysBitmask == 0) 127 else prefs.scheduleDaysBitmask,
+            autoModeEnabled = prefs.autoModeEnabled,
+            solarBackupEnabled = prefs.solarBackupEnabled,
+            weatherLat = prefs.weatherLat,
+            weatherLon = prefs.weatherLon,
+            weatherSyncEnabled = prefs.weatherSyncEnabled
+        )
     }
 
     // Hardware operations delegated exclusively to the active DeviceTransport

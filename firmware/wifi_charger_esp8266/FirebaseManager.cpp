@@ -37,6 +37,7 @@ void FirebaseManager::begin() {
   _lastPollTime = 0;
   _lastFullSyncTime = 0;
   _wifiClient.setInsecure();
+  _wifiClient.setSession(&_session);
   _wifiClient.setBufferSizes(1024, 512); // Pre-allocate 2048 bytes RX, 1536 bytes TX
   _wifiClient.setTimeout(4000);
   _httpClient.setTimeout(4000);
@@ -71,12 +72,10 @@ void FirebaseManager::loop() {
     return;
   }
 
-  // Non-starving local priority: Pause cloud TLS only if a local request happened in the last 1000ms
-  // UNLESS cloud operations haven't run for > 15 seconds (prevents complete cloud starvation).
-  if (httpSrvr.hasRecentInteraction() && (now - httpSrvr.getLastInteractionTime() < 1000UL)) {
-    if ((now - _lastSyncTime < 15000UL) && (now - _lastPollTime < 8000UL)) {
-      return;
-    }
+  // 100% LOCAL WEB PRIORITY: While a user is actively on the Web UI (within 3000ms),
+  // pause all background cloud TLS handshakes to ensure instantaneous sub-50ms HTTP responses.
+  if (httpSrvr.hasRecentInteraction() && (now - httpSrvr.getLastInteractionTime() < 3000UL)) {
+    return;
   }
 
   // Adaptive exponential backoff: skip TLS calls if previous attempts failed
@@ -84,10 +83,10 @@ void FirebaseManager::loop() {
     return;
   }
 
-  // Dynamic voltage delta check: if voltage shifts by >= 0.25V and at least 2000ms since last sync, trigger immediate sync
+  // Dynamic voltage delta check: if voltage shifts by >= 0.25V and at least 3000ms since last sync, trigger immediate sync
   static float lastKnownVolts = 0.0f;
   float curVolts = voltageSensor.getLastVoltage();
-  if (fabs(curVolts - lastKnownVolts) >= 0.25f && (now - _lastSyncTime >= 2000UL)) {
+  if (fabs(curVolts - lastKnownVolts) >= 0.25f && (now - _lastSyncTime >= 3000UL)) {
     lastKnownVolts = curVolts;
     _immediateSyncRequested = true;
   }
@@ -95,6 +94,10 @@ void FirebaseManager::loop() {
   // HIGH PRIORITY REAL-TIME DISPATCH:
   // If an immediate state change or command response occurred, sync to Firebase
   if (_immediateSyncRequested) {
+    // If a local HTTP command or request occurred recently, wait 2000ms for web interaction to settle!
+    if (httpSrvr.hasRecentInteraction() && (now - httpSrvr.getLastInteractionTime() < 2000UL)) {
+      return;
+    }
     if (now - _lastSyncTime >= 600UL && now - _lastPollTime >= 600UL) {
       _immediateSyncRequested = false;
       lastKnownVolts = curVolts;
@@ -103,9 +106,9 @@ void FirebaseManager::loop() {
     }
   }
 
-  // Fast & Safe real-time state sync interval: 4s when charging (relay ON), 8s when standby
-  unsigned long syncInterval = relayCtrl.isOn() ? 4000UL : 8000UL;
-  unsigned long pollInterval = 2000UL; // Fast 2.0s command polling (cuts latency by 50%)
+  // Adaptive real-time state sync interval: 6s when charging (relay ON), 12s when standby
+  unsigned long syncInterval = relayCtrl.isOn() ? 6000UL : 12000UL;
+  unsigned long pollInterval = 3000UL;
   bool syncDue = (now - _lastSyncTime >= syncInterval) && (now - _lastPollTime >= 600UL);
   bool pollDue = (now - _lastPollTime >= pollInterval) && (now - _lastSyncTime >= 600UL);
 

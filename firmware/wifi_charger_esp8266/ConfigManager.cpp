@@ -16,8 +16,8 @@ void ConfigManager::setDefaults() {
   strncpy(_config.deviceId, DEFAULT_DEVICE_ID, sizeof(_config.deviceId) - 1);
   strncpy(_config.deviceName, DEFAULT_DEVICE_NAME, sizeof(_config.deviceName) - 1);
 
-  memset(_config.wifiSsid, 0, sizeof(_config.wifiSsid));
-  memset(_config.wifiPass, 0, sizeof(_config.wifiPass));
+  strncpy(_config.wifiSsid, DEFAULT_WIFI_SSID, sizeof(_config.wifiSsid) - 1);
+  strncpy(_config.wifiPass, DEFAULT_WIFI_PASS, sizeof(_config.wifiPass) - 1);
   _config.wifiChannel         = 1;
   memset(_config.wifiBssid, 0, sizeof(_config.wifiBssid)); // No BSSID saved yet
 
@@ -279,7 +279,9 @@ void ConfigManager::factoryReset() {
 }
 
 String ConfigManager::toJson(bool maskSensitive) {
-  String s = "{";
+  String s;
+  s.reserve(750);
+  s = "{";
   s += "\"configVersion\":"        + String(_config.configVersion) + ",";
   s += "\"updatedAt\":"            + String(_config.updatedAt) + ",";
   s += "\"deviceId\":\""           + String(_config.deviceId) + "\",";
@@ -292,56 +294,27 @@ String ConfigManager::toJson(bool maskSensitive) {
   s += "\"apPass\":\""             + String(maskSensitive ? "********" : _config.apPass) + "\",";
   s += "\"apEnabled\":"            + String(_config.apEnabled ? "true" : "false") + ",";
   s += "\"batteryProfile\":"       + String(_config.batteryProfile) + ",";
-  s += "\"batteryProfileId\":"     + String(_config.batteryProfile) + ",";
-  s += "\"batteryProfileName\":\"" + String(batteryProfileToString((BatteryProfileType)_config.batteryProfile)) + "\",";
   s += "\"battery_profile_name\":\"" + String(batteryProfileToString((BatteryProfileType)_config.batteryProfile)) + "\",";
   s += "\"lowCut\":"               + String(_config.lowCutVoltage, 2) + ",";
-  s += "\"low_cut\":"              + String(_config.lowCutVoltage, 2) + ",";
-  s += "\"lowCutVoltage\":"        + String(_config.lowCutVoltage, 2) + ",";
   s += "\"highCut\":"              + String(_config.highCutVoltage, 2) + ",";
-  s += "\"high_cut\":"             + String(_config.highCutVoltage, 2) + ",";
-  s += "\"highCutVoltage\":"       + String(_config.highCutVoltage, 2) + ",";
   s += "\"hysteresis\":"           + String(_config.hysteresisVoltage, 2) + ",";
-  s += "\"hysteresisVoltage\":"    + String(_config.hysteresisVoltage, 2) + ",";
   s += "\"minOnTimeSecs\":"        + String(_config.minOnTimeSecs) + ",";
   s += "\"minOffTimeSecs\":"       + String(_config.minOffTimeSecs) + ",";
   s += "\"voltageCalibration\":"   + String(_config.voltageCalibration, 3) + ",";
-  s += "\"voltage_calibration\":"  + String(_config.voltageCalibration, 3) + ",";
   s += "\"voltageOffset\":"        + String(_config.voltageOffset, 2) + ",";
-  s += "\"voltage_offset\":"       + String(_config.voltageOffset, 2) + ",";
   s += "\"sensorMode\":"           + String(_config.sensorMode) + ",";
   s += "\"chargingMode\":"         + String(_config.chargingMode) + ",";
   s += "\"autoMode\":"             + String(_config.autoMode ? "true" : "false") + ",";
-  s += "\"auto_mode\":"            + String(_config.autoMode ? "true" : "false") + ",";
   s += "\"solarBackupEnabled\":"   + String(_config.solarBackupEnabled ? "true" : "false") + ",";
-  s += "\"solar_backup\":"         + String(_config.solarBackupEnabled ? "true" : "false") + ",";
   s += "\"scheduleEnabled\":"      + String(_config.scheduleEnabled ? "true" : "false") + ",";
-  s += "\"schedule_enabled\":"     + String(_config.scheduleEnabled ? "true" : "false") + ",";
   s += "\"scheduleDays\":"         + String(_config.scheduleDaysBitmask == 0 ? 127 : _config.scheduleDaysBitmask) + ",";
-  s += "\"schedule_days\":"        + String(_config.scheduleDaysBitmask == 0 ? 127 : _config.scheduleDaysBitmask) + ",";
-  s += "\"scheduleDaysBitmask\":"  + String(_config.scheduleDaysBitmask == 0 ? 127 : _config.scheduleDaysBitmask) + ",";
   s += "\"chargeStartHour\":"      + String(_config.chargeStartHour) + ",";
-  s += "\"charge_start_hour\":"    + String(_config.chargeStartHour) + ",";
-  s += "\"startHour\":"            + String(_config.chargeStartHour) + ",";
-  s += "\"start_hour\":"           + String(_config.chargeStartHour) + ",";
   s += "\"chargeStartMinute\":"    + String(_config.chargeStartMinute) + ",";
-  s += "\"charge_start_minute\":"  + String(_config.chargeStartMinute) + ",";
-  s += "\"startMinute\":"          + String(_config.chargeStartMinute) + ",";
-  s += "\"start_minute\":"         + String(_config.chargeStartMinute) + ",";
   s += "\"chargeStopHour\":"       + String(_config.chargeStopHour) + ",";
-  s += "\"charge_stop_hour\":"     + String(_config.chargeStopHour) + ",";
-  s += "\"stopHour\":"             + String(_config.chargeStopHour) + ",";
-  s += "\"stop_hour\":"            + String(_config.chargeStopHour) + ",";
   s += "\"chargeStopMinute\":"     + String(_config.chargeStopMinute) + ",";
-  s += "\"charge_stop_minute\":"   + String(_config.chargeStopMinute) + ",";
-  s += "\"stopMinute\":"           + String(_config.chargeStopMinute) + ",";
-  s += "\"stop_minute\":"          + String(_config.chargeStopMinute) + ",";
   s += "\"timezoneOffsetHours\":"  + String(_config.timezoneOffsetHours) + ",";
-  s += "\"timezone_offset\":"      + String(_config.timezoneOffsetHours) + ",";
   s += "\"chargerWatt\":"          + String(_config.chargerWatt, 1) + ",";
-  s += "\"charger_watt\":"         + String(_config.chargerWatt, 1) + ",";
   s += "\"chargerAmps\":"          + String(_config.chargerAmps, 2) + ",";
-  s += "\"charger_amps\":"         + String(_config.chargerAmps, 2) + ",";
   s += "\"electricityRate\":"      + String(_config.electricityRate, 2) + ",";
   s += "\"firebaseHost\":\""       + String(_config.firebaseHost) + "\",";
   s += "\"emergencyStop\":"        + String(_config.emergencyStop ? "true" : "false") + ",";

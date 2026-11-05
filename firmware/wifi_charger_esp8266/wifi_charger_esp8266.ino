@@ -249,6 +249,7 @@ void processSerialCommand(const String& line) {
     Serial.println(F("  POLARITY_LOW - Configure Active-LOW CW-Q20 (0V=ON, INPUT=OFF) & Save"));
     Serial.println(F("  POLARITY_HIGH- Configure Active-HIGH (3.3V=ON, 0V=OFF) & Save"));
     Serial.println(F("  FORMAT_FS    - Format LittleFS filesystem & rewrite defaults"));
+    Serial.println(F("  SCAN         - Trigger immediate Wi-Fi network scan"));
     Serial.println(F("  FACTORY_RESET- Wipe Wi-Fi & LittleFS, reset to Setup AP"));
     Serial.println(F("  REBOOT       - Restart ESP8266"));
   } else if (line.equalsIgnoreCase("STATUS")) {
@@ -405,6 +406,20 @@ void processSerialCommand(const String& line) {
     } else {
       Serial.println(F("[SerialCmd] Usage: SET_WEATHER <AUTO|CLEAR|CLOUDY|FOGGY|WINTER|RAIN>"));
     }
+  } else if (line.equalsIgnoreCase("SCAN")) {
+    Serial.println(F("[SCAN] Starting active Wi-Fi scan..."));
+    if (WiFi.getMode() != WIFI_AP_STA && WiFi.getMode() != WIFI_STA) {
+      WiFi.mode(WIFI_AP_STA);
+      delay(30);
+    }
+    int n = WiFi.scanNetworks(false, true);
+    Serial.printf("[SCAN] Scan complete! Found %d networks:\n", n);
+    for (int i = 0; i < n; i++) {
+      Serial.printf("  [%d] SSID: '%s' | Ch: %d | RSSI: %d dBm | %s\n",
+                    i, WiFi.SSID(i).c_str(), WiFi.channel(i), WiFi.RSSI(i),
+                    WiFi.encryptionType(i) == ENC_TYPE_NONE ? "OPEN" : "SECURED");
+    }
+    WiFi.scanDelete();
   } else if (line.equalsIgnoreCase("REBOOT")) {
     Serial.println(F("[SerialCmd] Rebooting ESP8266..."));
     ESP.restart();

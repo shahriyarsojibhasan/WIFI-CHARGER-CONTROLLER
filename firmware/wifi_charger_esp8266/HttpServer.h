@@ -18,10 +18,17 @@ public:
     return (_lastInteractionTime > 0 && (millis() - _lastInteractionTime < 6000UL));
   }
 
+  void triggerAsyncScan();
+  void updateScanCache(int n);
+  String getCachedScanJson() const { return _cachedScanJson; }
+
 private:
   ESP8266WebServer _server;
   ESP8266HTTPUpdateServer _httpUpdater;
   unsigned long _lastInteractionTime;
+  String _cachedScanJson;
+  bool _scanInProgress;
+  unsigned long _lastScanTime;
 
   void setupRoutes();
   void handleRoot();
