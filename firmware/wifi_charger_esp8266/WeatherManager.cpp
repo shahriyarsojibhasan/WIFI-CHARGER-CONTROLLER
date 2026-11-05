@@ -126,8 +126,8 @@ void WeatherManager::fetchWeather(bool force) {
 
   _lastAttemptTime = millis();
   const DeviceConfig& cfg = configMgr.get();
-  float lat = (cfg.weatherLat != 0.0f) ? cfg.weatherLat : 24.8465f; // Default Bogura
-  float lon = (cfg.weatherLon != 0.0f) ? cfg.weatherLon : 89.3777f;
+  float lat = (cfg.weatherLat != 0.0f) ? cfg.weatherLat : 25.0634f; // Solar Installation (25.063415, 89.268990)
+  float lon = (cfg.weatherLon != 0.0f) ? cfg.weatherLon : 89.2690f;
 
   char url[180];
   snprintf(url, sizeof(url),
@@ -166,12 +166,13 @@ void WeatherManager::fetchWeather(bool force) {
         // WMO weather code classification:
         // 0-1: Clear, 2-3: Partly cloudy/overcast, 45-48: Fog,
         // 51-67: Drizzle/Rain, 71-77: Snow, 80-82: Showers, 95-99: Thunderstorm
-        bool apiCloudy = (_cloudCover > 60 || _weatherCode >= 51);
-        bool apiWinter = (_temperature < 10.0f || (_weatherCode >= 71 && _weatherCode <= 77));
+        bool apiCloudy = (_cloudCover >= 50 || _weatherCode == 3 || _weatherCode >= 51);
+        bool apiWinter = (_temperature < 18.0f && (_cloudCover >= 40 || _weatherCode >= 2)) || (_temperature < 14.0f) || (_weatherCode >= 71 && _weatherCode <= 77);
         bool apiFoggy  = (_weatherCode >= 45 && _weatherCode <= 48);
         bool apiRain   = (_weatherCode >= 51 && _weatherCode <= 82);
 
-        _isCloudy = apiCloudy;
+        // Effective cloudy signal: any overcast, fog, winter sky, or rain blocks solar!
+        _isCloudy = (apiCloudy || apiFoggy || apiWinter || apiRain);
         _hasValidData = true;
         _lastFetchTime = millis();
 

@@ -59,8 +59,8 @@ void ConfigManager::setDefaults() {
   _config.maintenanceMode     = false;
   _config.relayActiveLow      = true; // Active-LOW relay module (Songle 5V / CW-Q20: 0V=ON, INPUT/High-Z=OFF)
 
-  _config.weatherLat          = 24.8465f; // Default Bogura
-  _config.weatherLon          = 89.3777f;
+  _config.weatherLat          = 25.0634f; // Solar Installation (25.063415, 89.268990)
+  _config.weatherLon          = 89.2690f;
   _config.weatherSyncEnabled  = true;
   _config.weatherManualMode   = 0;          // Auto weather mode (no manual override)
   _config.weatherManualOverride = false;    // Use Open-Meteo API by default
