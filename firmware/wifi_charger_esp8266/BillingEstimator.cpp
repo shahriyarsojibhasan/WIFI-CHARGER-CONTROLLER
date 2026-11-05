@@ -273,8 +273,10 @@ void BillingEstimator::tickOneSecond(bool isCharging, float currentVoltage, cons
 
 void BillingEstimator::acknowledgeSessions() {
   _sessionCount = 0;
-  LittleFS.remove("/sessions.dat");
-  Serial.println(F("[Billing] Acknowledged and cleared offline session buffer."));
+  if (LittleFS.exists("/sessions.dat")) {
+    LittleFS.remove("/sessions.dat");
+  }
+  Serial.println(F("[Billing] Acknowledged and cleared offline session buffer from memory & flash."));
 }
 
 void BillingEstimator::resetEnergyStats() {
@@ -336,12 +338,35 @@ String BillingEstimator::getOfflineSessionsJson() const {
 }
 
 void BillingEstimator::saveSessionsToStorage() {
-  // MCU Flash Lifespan Preservation:
-  // All billing metrics and 30-day records are retained in RAM and pushed directly to Firebase RTDB cloud.
-  // Flash write to /sessions.dat is eliminated to keep LittleFS 100% free and eliminate flash wear.
-  if (LittleFS.exists("/sessions.dat")) {
-    LittleFS.remove("/sessions.dat"); // Free up any legacy file
+  if (_sessionCount == 0) {
+    if (LittleFS.exists("/sessions.dat")) {
+      LittleFS.remove("/sessions.dat");
+    }
+    return;
   }
+  // Temporary offline buffer: only persists un-synced sessions so load shedding power cuts do not lose them
+  File f = LittleFS.open("/sessions.tmp", "w");
+  if (!f) return;
+  f.write((const uint8_t*)&_sessionCount, sizeof(_sessionCount));
+  f.write((const uint8_t*)&_todaySeconds, sizeof(_todaySeconds));
+  f.write((const uint8_t*)&_totalSeconds, sizeof(_totalSeconds));
+  f.write((const uint8_t*)&_autoSeconds, sizeof(_autoSeconds));
+  f.write((const uint8_t*)&_manualSeconds, sizeof(_manualSeconds));
+  f.write((const uint8_t*)&_scheduleSeconds, sizeof(_scheduleSeconds));
+  f.write((const uint8_t*)&_timerSeconds, sizeof(_timerSeconds));
+  f.write((const uint8_t*)&_solarSeconds, sizeof(_solarSeconds));
+  f.write((const uint8_t*)&_lastSavedDay, sizeof(_lastSavedDay));
+  if (_sessionCount > 0 && _sessionCount <= MAX_OFFLINE_SESSIONS) {
+    f.write((const uint8_t*)_sessions, sizeof(OfflineSession) * _sessionCount);
+  }
+  if (_dailyBillCount > 0 && _dailyBillCount <= 30) {
+    f.write((const uint8_t*)&_dailyBillCount, sizeof(_dailyBillCount));
+    f.write((const uint8_t*)_dailyBills, sizeof(DailyBillRecord) * _dailyBillCount);
+  }
+  f.flush();
+  f.close();
+  if (LittleFS.exists("/sessions.dat")) LittleFS.remove("/sessions.dat");
+  LittleFS.rename("/sessions.tmp", "/sessions.dat");
 }
 
 void BillingEstimator::loadSessionsFromStorage() {

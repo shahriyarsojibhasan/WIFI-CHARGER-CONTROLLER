@@ -253,8 +253,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <div class="stat-row" style="margin-top:8px;">
         <span style="font-size:12px;">Relay Polarity:</span>
         <select id="cfg-relay-polarity" onchange="changeRelayPolarity(this.value)" style="background:#0B0F19;color:#FFF;border:1px solid #334155;border-radius:6px;padding:4px 8px;font-size:12px;">
-          <option value="1">Active-LOW (Standard 5V)</option>
-          <option value="0">Active-HIGH</option>
+          <option value="0">Active-HIGH (3.3V=ON, 0V=OFF)</option>
+          <option value="1">Active-LOW (0V=ON, 3.3V=OFF)</option>
         </select>
       </div>
     </div>
