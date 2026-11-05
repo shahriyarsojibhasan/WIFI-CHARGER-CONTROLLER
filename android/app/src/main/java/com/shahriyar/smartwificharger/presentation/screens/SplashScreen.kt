@@ -158,12 +158,12 @@ fun SplashScreen(
 
             // Connection Mode Badge / Status
             val (badgeText, badgeColor, badgeIcon) = when (connectionMode) {
-                ConnectionMode.DIRECT_AP -> Triple("Direct SoftAP Connected", AmberAlert, Icons.Default.WifiTethering)
-                ConnectionMode.LOCAL_LAN -> Triple("Local LAN Socket Active", ElectricGreen, Icons.Default.Lan)
-                ConnectionMode.FIREBASE_WAN -> Triple("Firebase Cloud Connected", NeonCyan, Icons.Default.CloudDone)
-                ConnectionMode.CONNECTING -> Triple("Establishing Connection...", NeonCyan, Icons.Default.Wifi)
-                ConnectionMode.ERROR -> Triple("Connection Error - Offline", CoralRed, Icons.Default.Wifi)
-                ConnectionMode.OFFLINE -> Triple("Probing Wi-Fi & Networks...", NeonCyan, Icons.Default.Wifi)
+                ConnectionMode.DIRECT_AP -> Triple("Direct Hotspot Connected", AmberAlert, Icons.Default.WifiTethering)
+                ConnectionMode.LOCAL_LAN -> Triple("Wi-Fi Connected", ElectricGreen, Icons.Default.Lan)
+                ConnectionMode.FIREBASE_WAN -> Triple("Cloud Connected", NeonCyan, Icons.Default.CloudDone)
+                ConnectionMode.CONNECTING -> Triple("Connecting...", NeonCyan, Icons.Default.Wifi)
+                ConnectionMode.ERROR -> Triple("Offline", CoralRed, Icons.Default.Wifi)
+                ConnectionMode.OFFLINE -> Triple("Connecting...", NeonCyan, Icons.Default.Wifi)
             }
 
             Row(

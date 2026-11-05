@@ -84,8 +84,13 @@ data class TelemetryDto(
     @SerializedName("staSsid") val staSsid: String? = null,
     @SerializedName("emergency_stop") val emergencyStop: Boolean? = null,
     @SerializedName("is_profile_mismatch") val is_profile_mismatch: Boolean? = null,
-    @SerializedName("isProfileMismatch") val isProfileMismatch: Boolean? = null
+    @SerializedName("isProfileMismatch") val isProfileMismatch: Boolean? = null,
+    @SerializedName("last_updated") val lastUpdated: Long? = null,
+    @SerializedName("lastUpdated") val lastUpdatedAlt: Long? = null,
+    @SerializedName("last_seen") val lastSeenAlt: Long? = null
 ) {
+    val effectiveLastUpdated: Long?
+        get() = lastUpdated ?: lastUpdatedAlt ?: lastSeenAlt
     val effectiveVoltage: Float
         get() = when {
             batteryVoltage > 0.05f -> batteryVoltage

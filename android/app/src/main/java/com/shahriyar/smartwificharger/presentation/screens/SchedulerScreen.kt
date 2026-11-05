@@ -1,5 +1,6 @@
 package com.shahriyar.smartwificharger.presentation.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Refresh
 import com.shahriyar.smartwificharger.presentation.components.DailyScheduleTaskCard
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -33,6 +35,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Switch
@@ -588,6 +591,33 @@ fun SchedulerScreen(
                     fontSize = 13.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = DarkBackground
+                )
+            }
+        }
+
+        if (onResetSchedule != null) {
+            Spacer(modifier = Modifier.height(14.dp))
+            OutlinedButton(
+                onClick = onResetSchedule,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, AmberAlert.copy(alpha = 0.6f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AmberAlert)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = null,
+                    tint = AmberAlert,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isBn) "আজকের শিডিউল রিসেট করুন (আবার চালু করতে)" else "Reset Today's Schedule Session (Re-arm)",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AmberAlert
                 )
             }
         }

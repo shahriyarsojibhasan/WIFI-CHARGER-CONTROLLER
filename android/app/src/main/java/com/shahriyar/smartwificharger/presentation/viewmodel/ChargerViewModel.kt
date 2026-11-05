@@ -568,7 +568,7 @@ class ChargerViewModel(
             if (discoveredUrl != null) {
                 prefs.localEspIp = discoveredUrl
                 _uiState.update { it.copy(localIpSetting = discoveredUrl) }
-                showMessage("Discovered charger at $discoveredUrl (Transport: ${foundUrl.name})")
+                showMessage("Discovered charger on network at $discoveredUrl")
             } else {
                 showMessage("No Smart Charger device found on local network")
             }
@@ -715,7 +715,13 @@ class ChargerViewModel(
                     relaySwitchState = calculatedRelayState
                 )
             }
-            showMessage("Probe finished: Transport is ${bundle.connectionMode.name}")
+            val connName = when (bundle.connectionMode) {
+                ConnectionMode.DIRECT_AP -> "Direct AP"
+                ConnectionMode.LOCAL_LAN -> "Local Wi-Fi"
+                ConnectionMode.FIREBASE_WAN -> "Cloud"
+                else -> "Offline"
+            }
+            showMessage("Network probe finished: Connected via $connName")
         }
     }
 

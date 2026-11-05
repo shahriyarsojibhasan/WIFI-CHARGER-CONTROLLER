@@ -31,25 +31,25 @@ fun ConnectionBadge(
     isMcuOnline: Boolean = true,
     modifier: Modifier = Modifier
 ) {
-    val (label, dotColor, bgColor) = when (mode) {
-        ConnectionMode.DIRECT_AP -> if (isMcuOnline) {
-            Triple("Online AP", AmberAlert, Color(0x26FFB300))
-        } else {
-            Triple("Offline AP", CoralRed, Color(0x26FF5252))
+    val (label, dotColor, bgColor) = when {
+        !isMcuOnline || mode == ConnectionMode.OFFLINE || mode == ConnectionMode.ERROR -> {
+            Triple("Offline", CoralRed, Color(0x26FF5252))
         }
-        ConnectionMode.LOCAL_LAN -> if (isMcuOnline) {
-            Triple("Online Local", ElectricGreen, Color(0x2600E676))
-        } else {
-            Triple("Offline Local", CoralRed, Color(0x26FF5252))
+        mode == ConnectionMode.CONNECTING -> {
+            Triple("Connecting...", Color(0xFF94A3B8), Color(0x2694A3B8))
         }
-        ConnectionMode.FIREBASE_WAN -> if (isMcuOnline) {
-            Triple("Online WAN", NeonCyan, Color(0x2600E5FF))
-        } else {
-            Triple("Device Offline (WAN)", CoralRed, Color(0x26FF5252))
+        mode == ConnectionMode.DIRECT_AP -> {
+            Triple("Direct (AP)", AmberAlert, Color(0x26FFB300))
         }
-        ConnectionMode.OFFLINE -> Triple("Offline", CoralRed, Color(0x26FF5252))
-        ConnectionMode.CONNECTING -> Triple("Connecting...", Color(0xFF94A3B8), Color(0x2694A3B8))
-        ConnectionMode.ERROR -> Triple("Connection Error", CoralRed, Color(0x26FF5252))
+        mode == ConnectionMode.LOCAL_LAN -> {
+            Triple("Online", ElectricGreen, Color(0x2600E676))
+        }
+        mode == ConnectionMode.FIREBASE_WAN -> {
+            Triple("Online (Cloud)", NeonCyan, Color(0x2600E5FF))
+        }
+        else -> {
+            Triple("Offline", CoralRed, Color(0x26FF5252))
+        }
     }
 
     Box(

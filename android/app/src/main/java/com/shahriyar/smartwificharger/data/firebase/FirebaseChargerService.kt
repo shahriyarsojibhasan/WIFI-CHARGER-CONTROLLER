@@ -185,9 +185,7 @@ class FirebaseChargerService(
 
             if (stateObj != null && stateObj.has("lastUpdated")) {
                 val lu = stateObj.get("lastUpdated").asLong
-                if (lu > lastReportedLastSeen) lastReportedLastSeen = lu
-            } else if (lastReportedLastSeen == 0L && config?.updatedAt != null && config.updatedAt > 0L) {
-                lastReportedLastSeen = config.updatedAt
+                if (lu > 0L) lastReportedLastSeen = lu
             }
 
             val telemetry = if (stateObj != null) {
@@ -262,7 +260,8 @@ class FirebaseChargerService(
                     relayDiagnostic = relayDiag,
                     isProfileMismatch = isProfMis,
                     weatherStatus = stateObj.get("weatherStatus")?.asString ?: stateObj.get("weather_status")?.asString ?: "CLEAR",
-                    weatherManualOverride = stateObj.get("weatherManualOverride")?.asBoolean ?: stateObj.get("weather_manual_override")?.asBoolean ?: false
+                    weatherManualOverride = stateObj.get("weatherManualOverride")?.asBoolean ?: stateObj.get("weather_manual_override")?.asBoolean ?: false,
+                    lastUpdated = if (lastReportedLastSeen > 0L) lastReportedLastSeen else null
                 )
             } else if (config != null) {
                 TelemetryDto(
@@ -291,7 +290,8 @@ class FirebaseChargerService(
                     relayDiagnostic = "UNKNOWN",
                     isProfileMismatch = false,
                     weatherStatus = "CLEAR",
-                    weatherManualOverride = false
+                    weatherManualOverride = false,
+                    lastUpdated = if (lastReportedLastSeen > 0L) lastReportedLastSeen else null
                 )
             } else null
 

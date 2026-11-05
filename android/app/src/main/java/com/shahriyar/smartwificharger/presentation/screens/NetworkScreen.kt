@@ -99,7 +99,7 @@ fun NetworkScreen(
                     color = NeonCyan
                 )
                 Text(
-                    text = if (isBn) "অগ্রাধিকার: SoftAP > লোকাল ল্যান > ক্লাউড" else "Priority: AP > Local LAN > Firebase WAN",
+                    text = if (isBn) "স্মার্ট অটো-কানেক্ট: লোকাল ও ক্লাউড" else "Smart Multi-Link Auto Connect",
                     fontSize = 11.sp,
                     color = TextMuted
                 )
@@ -464,11 +464,11 @@ fun NetworkScreen(
                     color = NeonCyan
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                PriorityRow("1", "DIRECT AP", if (isBn) "সরাসরি নোডএমসিইউ হটস্পট (192.168.4.1)" else "Direct SoftAP socket (192.168.4.1)", state.connectionMode.name == "DIRECT_AP")
+                PriorityRow("1", if (isBn) "সরাসরি হটস্পট" else "Direct Hotspot", if (isBn) "চার্জারের নিজস্ব সংযোগ (192.168.4.1)" else "Direct device hotspot (192.168.4.1)", state.connectionMode.name == "DIRECT_AP")
                 Spacer(modifier = Modifier.height(6.dp))
-                PriorityRow("2", "LOCAL LAN", if (isBn) "বাসার লোকাল রাউটার (mDNS / UDP)" else "Local Wi-Fi router (mDNS / UDP)", state.connectionMode.name == "LOCAL_LAN")
+                PriorityRow("2", if (isBn) "বাসার ওয়াই-ফাই" else "Home Wi-Fi (Local)", if (isBn) "বাসার লোকাল রাউটার নেটওয়ার্ক" else "Local home Wi-Fi network", state.connectionMode.name == "LOCAL_LAN")
                 Spacer(modifier = Modifier.height(6.dp))
-                PriorityRow("3", "FIREBASE WAN", if (isBn) "ক্লাউড রিয়েলটাইম ডেটাবেস" else "Cloud Realtime Database", state.connectionMode.name == "FIREBASE_WAN")
+                PriorityRow("3", if (isBn) "ক্লাউড অনলাইন" else "Cloud (Internet)", if (isBn) "ইন্টারনেট ক্লাউড রিয়েলটাইম মনিটরিং" else "Remote cloud realtime monitoring", state.connectionMode.name == "FIREBASE_WAN")
             }
         }
 

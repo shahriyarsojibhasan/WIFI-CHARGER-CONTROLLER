@@ -210,22 +210,18 @@ class ChargerRepository(
                 fetchedFromServer || (now - lastSuccessfulServerFetchTime < 12000L)
             }
             ConnectionMode.FIREBASE_WAN -> {
-                val lastSeen = firebaseService.lastReportedLastSeen
-                if (fetchedFromServer) {
-                    val nowSec = now / 1000
-                    if (lastSeen > 1000000000L) {
-                        // ESP reports lastSeen unix timestamp every 8-25s.
-                        // Tolerates clock drift and periodic standby intervals up to 120s
-                        kotlin.math.abs(nowSec - lastSeen) <= 120L
-                    } else if (lastSeen > 0L) {
-                        // Unsynced NTP or uptime seconds, but valid server fetch was achieved
-                        (now - lastSuccessfulServerFetchTime) < 90000L
-                    } else {
-                        // If Firebase returned valid server response within last 60s, keep online
-                        (now - lastSuccessfulServerFetchTime) < 60000L
-                    }
+                var lastSeen = firebaseService.lastReportedLastSeen
+                if (lastSeen > 1000000000000L) {
+                    lastSeen /= 1000L
+                }
+                val nowSec = now / 1000L
+                // MCU syncs state and heartbeat to Firebase every 6-12s.
+                // If lastSeen <= 1000000000L or older than 50 seconds, the hardware is OFFLINE.
+                // Crucial: Reaching Firebase alone does NOT mean the MCU is online!
+                if (lastSeen > 1000000000L) {
+                    kotlin.math.abs(nowSec - lastSeen) <= 50L
                 } else {
-                    (now - lastSuccessfulServerFetchTime) < 60000L && (now / 1000 - firebaseService.lastReportedLastSeen) <= 120L
+                    false
                 }
             }
             else -> false
@@ -324,7 +320,15 @@ class ChargerRepository(
                 apSsid = t.apSsid ?: (t.ap_ssid ?: "SMART CHARGE CONTROLLER"),
                 staSsid = t.staSsid ?: (t.sta_ssid ?: ""),
                 emergencyStop = t.emergencyStop ?: false,
-                isProfileMismatch = isMismatch
+                isProfileMismatch = isMismatch,
+                lastUpdatedEpoch = run {
+                    val rawEpoch = t.effectiveLastUpdated ?: firebaseService.lastReportedLastSeen
+                    when {
+                        rawEpoch > 1000000000000L -> rawEpoch
+                        rawEpoch > 1000000000L -> rawEpoch * 1000L
+                        else -> System.currentTimeMillis()
+                    }
+                }
             )
 
             cachedFault = SystemFault(

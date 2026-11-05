@@ -368,7 +368,7 @@ fun DashboardScreen(
             stopHour = state.config.chargeStopHour,
             stopMinute = state.config.chargeStopMinute,
             isBn = isBn,
-            onResetSchedule = onResetSchedule
+            onResetSchedule = null // Clean view on Dashboard; reset button lives inside Scheduler screen
         )
 
         Spacer(modifier = Modifier.height(14.dp))
