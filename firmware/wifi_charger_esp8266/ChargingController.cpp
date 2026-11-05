@@ -721,6 +721,23 @@ void ChargingController::resetScheduleSession() {
   Serial.println(F("[ChargingCtrl] Schedule session reset/cleared."));
 }
 
+void ChargingController::markDailyScheduleCompleted() {
+  _dailyScheduleCompleted = true;
+  _scheduleCompletedForWindow = true;
+  _scheduleSessionActive = false;
+  _scheduleCompensating = false;
+  _scheduleRemainingSeconds = 0;
+  if (_lastDailyScheduleDate == 0) {
+    _lastDailyScheduleDate = scheduleCtrl.getTodayDateCode();
+  }
+  saveScheduleState();
+  if (relayCtrl.isOn() && _state == STATE_CHARGING) {
+    relayCtrl.forceOff("SCHEDULE_MARKED_COMPLETE");
+  }
+  transitionTo(STATE_SCHEDULE_WAIT, "Daily Schedule Marked Complete via Command");
+  Serial.println(F("[ChargingCtrl] Today's daily schedule has been marked COMPLETED."));
+}
+
 void ChargingController::resetDailySchedule() {
   _dailyScheduleCompleted = false;
   _dailyScheduleChargedSecs = 0;

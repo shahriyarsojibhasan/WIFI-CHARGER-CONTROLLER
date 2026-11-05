@@ -45,6 +45,7 @@ public:
   uint32_t getScheduleTotalSeconds() const { return _scheduleTotalSeconds; }
   uint32_t getScheduleDateCode() const;
   const char* getDailyScheduleStatus() const;
+  void markDailyScheduleCompleted();
   void resetScheduleSession();
   void resetDailySchedule();
   void onScheduleUpdated();

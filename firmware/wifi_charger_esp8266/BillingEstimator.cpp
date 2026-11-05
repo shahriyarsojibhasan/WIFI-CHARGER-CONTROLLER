@@ -336,25 +336,12 @@ String BillingEstimator::getOfflineSessionsJson() const {
 }
 
 void BillingEstimator::saveSessionsToStorage() {
-  File f = LittleFS.open("/sessions.dat", "w");
-  if (!f) return;
-  f.write((uint8_t*)&_sessionCount, sizeof(_sessionCount));
-  f.write((uint8_t*)&_todaySeconds, sizeof(_todaySeconds));
-  f.write((uint8_t*)&_totalSeconds, sizeof(_totalSeconds));
-  f.write((uint8_t*)&_autoSeconds, sizeof(_autoSeconds));
-  f.write((uint8_t*)&_manualSeconds, sizeof(_manualSeconds));
-  f.write((uint8_t*)&_scheduleSeconds, sizeof(_scheduleSeconds));
-  f.write((uint8_t*)&_timerSeconds, sizeof(_timerSeconds));
-  f.write((uint8_t*)&_solarSeconds, sizeof(_solarSeconds));
-  f.write((uint8_t*)&_lastSavedDay, sizeof(_lastSavedDay));
-  if (_sessionCount > 0) {
-    f.write((uint8_t*)_sessions, sizeof(OfflineSession) * _sessionCount);
+  // MCU Flash Lifespan Preservation:
+  // All billing metrics and 30-day records are retained in RAM and pushed directly to Firebase RTDB cloud.
+  // Flash write to /sessions.dat is eliminated to keep LittleFS 100% free and eliminate flash wear.
+  if (LittleFS.exists("/sessions.dat")) {
+    LittleFS.remove("/sessions.dat"); // Free up any legacy file
   }
-  f.write((uint8_t*)&_dailyBillCount, sizeof(_dailyBillCount));
-  if (_dailyBillCount > 0) {
-    f.write((uint8_t*)_dailyBills, sizeof(DailyBillRecord) * _dailyBillCount);
-  }
-  f.close();
 }
 
 void BillingEstimator::loadSessionsFromStorage() {

@@ -252,6 +252,9 @@ void processSerialCommand(const String& line) {
     Serial.println(F("  SCAN         - Trigger immediate Wi-Fi network scan"));
     Serial.println(F("  FACTORY_RESET- Wipe Wi-Fi & LittleFS, reset to Setup AP"));
     Serial.println(F("  REBOOT       - Restart ESP8266"));
+  } else if (line.equalsIgnoreCase("COMPLETE_SCHED") || line.equalsIgnoreCase("SCHED_COMPLETE")) {
+    chargingCtrl.markDailyScheduleCompleted();
+    Serial.println(F("[SerialCmd] OK: Today's schedule marked as COMPLETED."));
   } else if (line.equalsIgnoreCase("STATUS")) {
     const DeviceConfig& cfg = configMgr.get();
     Serial.printf("[STATUS] %s | Profile=%s (Cut=%.2f-%.2fV) | Batt=%.2fV | Mismatch=%s | Disconnected=%s | State=%s | Relay=%s(D1=%d) | Polarity=%s | WiFi=%s(IP=%s) | Sched=%s(%02d:%02d-%02d:%02d,InWin=%s) | Weather=%s(Cloud=%d%%,Code=%d,Cloudy=%s,Manual=%s,SolarWin=%s)\n",
