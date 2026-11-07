@@ -30,7 +30,8 @@ ChargingController::ChargingController()
     _scheduleSessionEpoch(0),
     _dailyScheduleChargedSecs(0),
     _lastDailyScheduleDate(0),
-    _dailyScheduleCompleted(false)
+    _dailyScheduleCompleted(false),
+    _clockSyncedAtLeastOnce(false)
 {
 }
 
@@ -226,8 +227,8 @@ void ChargingController::tick() {
     if (_scheduleRemainingSeconds > 0) {
       _scheduleRemainingSeconds--;
       _dailyScheduleChargedSecs++;
-      // Persist to LittleFS every 10 seconds so electricity cut won't lose remaining duration!
-      if (_lastSchedulePersistSec == 0 || (_lastSchedulePersistSec - _scheduleRemainingSeconds >= 300)) {
+      // Persist to LittleFS every 15 seconds so power loss does not lose duration progress
+      if (_lastSchedulePersistSec == 0 || (_lastSchedulePersistSec - _scheduleRemainingSeconds >= 15)) {
         _lastSchedulePersistSec = _scheduleRemainingSeconds;
         saveScheduleState();
       }
@@ -258,6 +259,26 @@ void ChargingController::tick() {
     _scheduleSessionActive = false;
     _scheduleRemainingSeconds = 0;
     saveScheduleState();
+  }
+
+  // 2d. Deferred time synchronization & schedule power-loss recovery check
+  if (!_clockSyncedAtLeastOnce && timeMgr.isSynced()) {
+    _clockSyncedAtLeastOnce = true;
+    uint32_t currentToday = scheduleCtrl.getTodayDateCode();
+    Serial.printf("[ChargingCtrl] NTP Clock acquired: dateCode=%lu\n", (unsigned long)currentToday);
+    if (_lastDailyScheduleDate == 0) {
+      _lastDailyScheduleDate = currentToday;
+    } else if (currentToday != 0 && _lastDailyScheduleDate != currentToday) {
+      _lastDailyScheduleDate = currentToday;
+      _dailyScheduleCompleted = false;
+      _dailyScheduleChargedSecs = 0;
+      _scheduleCompletedForWindow = false;
+      _scheduleCompensating = false;
+      _scheduleSessionActive = false;
+      _scheduleRemainingSeconds = 0;
+      saveScheduleState();
+    }
+    checkDailyScheduleCatchup();
   }
 
   // 3. Update electrical diagnostic
@@ -314,16 +335,26 @@ void ChargingController::evaluateStateMachine() {
   }
 
   // ── RULE 1.6: UNIVERSAL FULL CHARGE HIGH-CUT SAFETY PROTECTION (ALL MODES) ──
-  // If battery reaches true highCutVoltage sustained for 3 consecutive seconds:
-  // Battery is 100% full. Forcibly shut off relay and disarm all charging states
-  // regardless of whether charging was initiated by Manual, Timer, Schedule, Auto, or Weather!
-  if (isRelayOn && volts >= cfg.highCutVoltage && volts >= minBatteryVolts && !voltageSensor.isDisconnected()) {
+  // When charging (relay is ON), the terminal voltage exhibits a ~0.30V charging rise / IR drop.
+  // We apply:
+  // 1. 30s inrush stabilization blanking window upon relay turn-on.
+  // 2. Charging cutoff threshold = cfg.highCutVoltage + 0.30V (compensating for the 0.30V charging gap).
+  // 3. 15-second debounce sustain window to ensure battery is genuinely full before cutoff.
+  bool isRelayStabilizing = isRelayOn && (millis() - relayCtrl.getLastToggleTime() < 30000UL);
+  float hardCeiling = (cfg.batteryProfile == PROFILE_LEAD_ACID_CONSERVATIVE || cfg.batteryProfile == PROFILE_LEAD_ACID_12V) ? 15.0f : (cfg.highCutVoltage + 2.0f);
+  float activeHighCut = cfg.highCutVoltage + (isRelayOn ? 0.30f : 0.0f);
+
+  bool overCeiling = (isRelayOn && volts >= hardCeiling && !voltageSensor.isDisconnected());
+  bool overCutoff  = (isRelayOn && !isRelayStabilizing && volts >= activeHighCut && volts >= minBatteryVolts && !voltageSensor.isDisconnected());
+
+  if (overCeiling || overCutoff) {
     _highCutSustainCount++;
-    Serial.printf("[ChargingCtrl] Full charge high-cut reached: %.2fV >= %.2fV (sustain %d/3)\n",
-                  volts, cfg.highCutVoltage, _highCutSustainCount);
-    if (_highCutSustainCount >= 3) {
+    uint8_t requiredSustain = overCeiling ? 2 : 15;
+    Serial.printf("[ChargingCtrl] Full charge high-cut evaluating: %.2fV >= %.2fV (sustain %d/%d, stabilizing=%s)\n",
+                  volts, overCeiling ? hardCeiling : activeHighCut, _highCutSustainCount, requiredSustain, isRelayStabilizing ? "YES" : "NO");
+    if (_highCutSustainCount >= requiredSustain) {
       _highCutSustainCount = 0;
-      relayCtrl.forceOff("FULL_CHARGE_HIGH_CUT_PROTECTION");
+      relayCtrl.forceOff(overCeiling ? "HARD_OVERVOLTAGE_CEILING_CUT" : "FULL_CHARGE_HIGH_CUT_PROTECTION");
       
       _autoChargingActive = false;
       clearAutoChargeState();
@@ -348,8 +379,8 @@ void ChargingController::evaluateStateMachine() {
       }
 
       transitionTo(STATE_HIGH_CUT, "Battery Full (High Cut Sustained): Safe Auto Cutoff");
-      Serial.printf("[ChargingCtrl] FULL CHARGE PROTECTION: Relay OFF at %.2fV (HighCut: %.2fV)\n",
-                    volts, cfg.highCutVoltage);
+      Serial.printf("[ChargingCtrl] FULL CHARGE PROTECTION: Relay OFF at %.2fV (Target: %.2fV, ActiveCut: %.2fV)\n",
+                    volts, cfg.highCutVoltage, activeHighCut);
       firebaseMgr.triggerImmediateSync();
       return;
     }
@@ -463,24 +494,6 @@ void ChargingController::evaluateStateMachine() {
         saveScheduleState();
         Serial.printf("[ChargingCtrl] Initiated schedule window session: %lu s total, %lu s remaining\n",
                       (unsigned long)_scheduleTotalSeconds, (unsigned long)_scheduleRemainingSeconds);
-      }
-
-      if (volts >= cfg.highCutVoltage) {
-        _highCutSustainCount++;
-        Serial.printf("[ChargingCtrl] High-cut reached in Schedule Window (%.2fV >= %.2fV), sustain: %d/3\n",
-                      volts, cfg.highCutVoltage, _highCutSustainCount);
-        if (_highCutSustainCount >= 3) {
-          _highCutSustainCount = 0;
-          _scheduleCompletedForWindow = true;
-          _dailyScheduleCompleted = true;
-          _scheduleSessionActive = false;
-          saveScheduleState();
-          if (isRelayOn) relayCtrl.forceOff("HIGH_CUT_REACHED");
-          transitionTo(STATE_HIGH_CUT, "Battery Full: High Cut in Schedule (Task Complete)");
-          return;
-        }
-      } else {
-        _highCutSustainCount = 0;
       }
 
       if (!isRelayOn) {
@@ -829,6 +842,62 @@ void ChargingController::loadScheduleState() {
   _scheduleTotalSeconds = 0;
   _lastSchedulePersistSec = 0;
   Serial.println(F("[ChargingCtrl] No active schedule session found. Relay remains OFF."));
+}
+
+void ChargingController::checkDailyScheduleCatchup() {
+  const DeviceConfig& cfg = configMgr.get();
+  if (!cfg.scheduleEnabled) return;
+
+  if (_scheduleSessionActive || _dailyScheduleCompleted) return;
+
+  String json;
+  if (storageMgr.readFile("/sched_session.json", json)) {
+    int idxRem   = json.indexOf("\"remaining\":");
+    int idxTot   = json.indexOf("\"total\":");
+    int idxComp  = json.indexOf("\"completed\":");
+    int idxDate  = json.indexOf("\"date\":");
+    int idxChgd  = json.indexOf("\"charged\":");
+
+    uint32_t rem   = (idxRem != -1) ? (uint32_t)json.substring(idxRem + 12).toInt() : 0;
+    uint32_t tot   = (idxTot != -1) ? (uint32_t)json.substring(idxTot + 8).toInt() : 0;
+    bool completed = (idxComp != -1 && (json.substring(idxComp + 12, idxComp + 16) == "true"));
+    uint32_t sDate = (idxDate != -1) ? (uint32_t)json.substring(idxDate + 7).toInt() : 0;
+    uint32_t chgd  = (idxChgd != -1) ? (uint32_t)json.substring(idxChgd + 10).toInt() : 0;
+
+    uint32_t today = scheduleCtrl.getTodayDateCode();
+    if (sDate != 0 && today != 0 && sDate != today) {
+      _lastDailyScheduleDate = today;
+      _dailyScheduleCompleted = false;
+      _dailyScheduleChargedSecs = 0;
+      clearScheduleState();
+      return;
+    }
+
+    _lastDailyScheduleDate = (sDate != 0) ? sDate : today;
+    _dailyScheduleCompleted = completed;
+    _dailyScheduleChargedSecs = chgd;
+
+    if (!completed && rem >= 10 && rem <= 86400) {
+      _scheduleSessionActive = true;
+      _scheduleRemainingSeconds = rem;
+      _scheduleTotalSeconds = (tot > 0) ? tot : rem;
+      _lastSchedulePersistSec = rem;
+
+      bool inSchedule = scheduleCtrl.isScheduleActiveNow();
+      String err;
+      if (inSchedule) {
+        _scheduleCompensating = false;
+        relayCtrl.setRelay(true, false, "SCHEDULE_CLOCK_SYNC_RESUME", err);
+        transitionTo(STATE_CHARGING, "Clock Synced: Resuming Inside Schedule");
+        Serial.printf("[ChargingCtrl] CLOCK SYNC RESUME: Inside schedule window! %lu sec remaining. RELAY ON.\n", (unsigned long)rem);
+      } else {
+        _scheduleCompensating = true;
+        relayCtrl.setRelay(true, false, "SCHEDULE_CLOCK_SYNC_COMPENSATE", err);
+        transitionTo(STATE_CHARGING, "Clock Synced: Compensating Unfinished Schedule");
+        Serial.printf("[ChargingCtrl] CLOCK SYNC RESUME: Outside schedule window! Compensating %lu sec. RELAY ON.\n", (unsigned long)rem);
+      }
+    }
+  }
 }
 
 uint32_t ChargingController::getScheduleDateCode() const {

@@ -272,11 +272,11 @@ void BillingEstimator::tickOneSecond(bool isCharging, float currentVoltage, cons
 }
 
 void BillingEstimator::acknowledgeSessions() {
-  _sessionCount = 0;
-  if (LittleFS.exists("/sessions.dat")) {
-    LittleFS.remove("/sessions.dat");
+  for (int i = 0; i < _sessionCount; i++) {
+    _sessions[i].isSynced = true;
   }
-  Serial.println(F("[Billing] Acknowledged and cleared offline session buffer from memory & flash."));
+  saveSessionsToStorage();
+  Serial.println(F("[Billing] Acknowledged offline sessions. Preserved lifetime & daily metrics."));
 }
 
 void BillingEstimator::resetEnergyStats() {
@@ -338,13 +338,16 @@ String BillingEstimator::getOfflineSessionsJson() const {
 }
 
 void BillingEstimator::saveSessionsToStorage() {
-  if (_sessionCount == 0) {
-    if (LittleFS.exists("/sessions.dat")) {
-      LittleFS.remove("/sessions.dat");
+  FSInfo fs_info;
+  if (LittleFS.info(fs_info)) {
+    // Flash wear and storage guard: ensure > 50% free space always maintained
+    if (fs_info.totalBytes > 0 && (fs_info.totalBytes - fs_info.usedBytes) < (fs_info.totalBytes / 2)) {
+      Serial.println(F("[Billing] Flash storage has < 50% free space! Protecting flash."));
+      return;
     }
-    return;
   }
-  // Temporary offline buffer: only persists un-synced sessions so load shedding power cuts do not lose them
+
+  // Persists un-synced sessions, lifetime metrics & daily bills safely
   File f = LittleFS.open("/sessions.tmp", "w");
   if (!f) return;
   f.write((const uint8_t*)&_sessionCount, sizeof(_sessionCount));

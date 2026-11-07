@@ -418,9 +418,17 @@ void FirebaseManager::pollCommands() {
           }
         }
 
+        // Handle mark complete schedule
+        if (json.indexOf("\"complete_schedule\":true") != -1 || json.indexOf("\"completeSchedule\":true") != -1 ||
+            action == "COMPLETE_SCHEDULE" || action == "COMPLETE_SCHED") {
+          chargingCtrl.markDailyScheduleCompleted();
+          triggerImmediateSync();
+          action = "PROCESSED";
+        }
+
         // Handle reset schedule
         if (json.indexOf("\"reset_schedule\":true") != -1 || json.indexOf("\"resetSchedule\":true") != -1 ||
-            action == "RESET_SCHEDULE") {
+            action == "RESET_SCHEDULE" || action == "RESET_SCHED") {
           chargingCtrl.resetDailySchedule();
           triggerImmediateSync();
           action = "PROCESSED";

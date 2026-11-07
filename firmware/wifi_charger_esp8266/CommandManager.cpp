@@ -191,6 +191,16 @@ CommandAck CommandManager::processCommand(
     }
     firebaseMgr.triggerImmediateSync();
     return ACK_EXECUTED;
+  } else if (upperAction == "RESET_SCHEDULE" || upperAction == "RESET_SCHED") {
+    chargingCtrl.resetDailySchedule();
+    firebaseMgr.triggerImmediateSync();
+    outMessage = "Today's schedule completion reset. Schedule ready to run.";
+    return ACK_EXECUTED;
+  } else if (upperAction == "COMPLETE_SCHEDULE" || upperAction == "COMPLETE_SCHED") {
+    chargingCtrl.markDailyScheduleCompleted();
+    firebaseMgr.triggerImmediateSync();
+    outMessage = "Today's schedule marked COMPLETED.";
+    return ACK_EXECUTED;
   } else if (upperAction == "CLEAR_WEATHER_OVERRIDE") {
     weatherMgr.clearManualOverride();
     firebaseMgr.triggerImmediateSync();

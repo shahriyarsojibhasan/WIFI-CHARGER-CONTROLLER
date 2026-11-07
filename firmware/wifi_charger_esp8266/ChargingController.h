@@ -74,6 +74,7 @@ private:
   uint32_t _dailyScheduleChargedSecs;
   uint32_t _lastDailyScheduleDate;
   bool _dailyScheduleCompleted;
+  bool _clockSyncedAtLeastOnce;
 
   void saveTimerState();
   void clearTimerState();

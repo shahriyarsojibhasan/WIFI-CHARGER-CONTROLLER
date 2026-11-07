@@ -237,6 +237,10 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <input type="number" id="cfg-tz" value="6">
 
       <button class="btn primary" onclick="saveSchedule()" id="btn-save-sched">Save Schedule</button>
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button class="btn" style="flex:1;background:var(--green);color:#0B0F19;font-weight:bold;padding:8px;" onclick="markScheduleComplete()" id="btn-complete-sched">✓ Mark Complete</button>
+        <button class="btn" style="flex:1;background:#334155;color:#FFF;padding:8px;" onclick="resetScheduleToday()" id="btn-reset-sched">↻ Reset Schedule</button>
+      </div>
       <div id="sched-status" style="margin-top:8px;font-size:12px;display:none;font-weight:bold;"></div>
     </div>
   </div>
@@ -253,8 +257,8 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       <div class="stat-row" style="margin-top:8px;">
         <span style="font-size:12px;">Relay Polarity:</span>
         <select id="cfg-relay-polarity" onchange="changeRelayPolarity(this.value)" style="background:#0B0F19;color:#FFF;border:1px solid #334155;border-radius:6px;padding:4px 8px;font-size:12px;">
-          <option value="0">Active-HIGH (3.3V=ON, 0V=OFF)</option>
           <option value="1">Active-LOW (0V=ON, 3.3V=OFF)</option>
+          <option value="0">Active-HIGH (3.3V=ON, 0V=OFF)</option>
         </select>
       </div>
     </div>
@@ -846,6 +850,30 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       update();
     }
 
+    async function markScheduleComplete() {
+      const status = document.getElementById('sched-status');
+      status.style.display = 'block';
+      status.style.color = 'var(--green)';
+      status.innerText = isBangla ? 'আজকের শিডিউল সম্পন্ন করা হচ্ছে...' : 'Marking today complete...';
+      try {
+        await fetch('/api/v1/schedule/complete', {method:'POST'});
+        status.innerText = isBangla ? '✓ আজকের শিডিউল সম্পন্ন হিসেবে চিহ্নিত হয়েছে!' : '✓ Today marked complete!';
+      } catch(e) { status.innerText = '✕ Error'; }
+      update();
+    }
+
+    async function resetScheduleToday() {
+      const status = document.getElementById('sched-status');
+      status.style.display = 'block';
+      status.style.color = 'var(--yellow)';
+      status.innerText = isBangla ? 'আজকের শিডিউল রিসেট হচ্ছে...' : 'Resetting schedule...';
+      try {
+        await fetch('/api/v1/schedule/reset', {method:'POST'});
+        status.innerText = isBangla ? '✓ শিডিউল রিসেট সম্পন্ন হয়েছে!' : '✓ Schedule reset successfully!';
+      } catch(e) { status.innerText = '✕ Error'; }
+      update();
+    }
+
     let updateTimer = null;
 
     async function scanWifi(forceRefresh = true) {
@@ -1110,6 +1138,17 @@ void HttpServer::setupRoutes() {
              [this]() { handleMaintenancePost(); });
   _server.on("/api/v1/schedule", HTTP_POST, [this]() { handleSchedulePost(); });
   _server.on("/api/schedule", HTTP_POST, [this]() { handleSchedulePost(); });
+  auto handleScheduleCompleteAction = [this]() {
+    chargingCtrl.markDailyScheduleCompleted();
+    _server.sendHeader("Access-Control-Allow-Origin", "*");
+    _server.sendHeader("Connection", "close");
+    _server.send(200, "application/json",
+                 "{\"success\":true,\"message\":\"Today's schedule marked COMPLETED.\"}");
+  };
+  _server.on("/api/v1/schedule/complete", HTTP_POST, handleScheduleCompleteAction);
+  _server.on("/api/schedule/complete", HTTP_POST, handleScheduleCompleteAction);
+  _server.on("/api/v1/schedule/complete", HTTP_GET, handleScheduleCompleteAction);
+  _server.on("/api/schedule/complete", HTTP_GET, handleScheduleCompleteAction);
   auto handleScheduleResetAction = [this]() {
     chargingCtrl.resetDailySchedule();
     _server.sendHeader("Access-Control-Allow-Origin", "*");
