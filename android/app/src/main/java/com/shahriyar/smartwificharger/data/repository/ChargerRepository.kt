@@ -170,9 +170,20 @@ class ChargerRepository(
 
         var fetchedFromServer = false
         var statusRes = activeTransport.fetchStatus()
-        // If initial probe hasn't resolved yet (CONNECTING), attempt direct cloud fetch so initial frame has live data
+        // If initial probe hasn't resolved yet (CONNECTING), attempt direct fetch from saved local IP first
         if (statusRes == null && (currentMode == ConnectionMode.CONNECTING || currentMode == ConnectionMode.OFFLINE)) {
-            statusRes = firebaseService.fetchDeviceData()
+            val savedIp = prefs.lastKnownLanIp.ifBlank { prefs.localEspIp }
+            if (savedIp.isNotBlank() && !savedIp.contains(".local") && !savedIp.contains("192.168.4.1")) {
+                try {
+                    statusRes = connectionManager.localLanTransport.fetchStatus()
+                    if (statusRes != null) {
+                        connectionManager.setLearnedLanIp(savedIp)
+                    }
+                } catch (_: Exception) {}
+            }
+            if (statusRes == null) {
+                statusRes = firebaseService.fetchDeviceData()
+            }
         }
 
         val now = System.currentTimeMillis()
@@ -187,11 +198,17 @@ class ChargerRepository(
             firebaseService.lastReportedLanIp?.let { lanIp ->
                 if (lanIp.isNotBlank() && lanIp != "0.0.0.0") {
                     connectionManager.setLearnedLanIp(lanIp)
+                    val formatted = if (lanIp.startsWith("http")) lanIp else "http://$lanIp"
+                    prefs.lastKnownLanIp = formatted
+                    prefs.localEspIp = formatted
                 }
             }
             statusRes.telemetry?.deviceIp?.let { ip ->
                 if (ip.isNotBlank() && ip != "0.0.0.0" && !ip.startsWith("192.168.4.")) {
                     connectionManager.setLearnedLanIp(ip)
+                    val formatted = if (ip.startsWith("http")) ip else "http://$ip"
+                    prefs.lastKnownLanIp = formatted
+                    prefs.localEspIp = formatted
                 }
             }
         } else {
@@ -814,6 +831,11 @@ class ChargerRepository(
 
     suspend fun resetDailySchedule(): DeviceCommandResult = withContext(Dispatchers.IO) {
         val res = deviceTransport.resetDailySchedule()
+        res
+    }
+
+    suspend fun completeDailySchedule(): DeviceCommandResult = withContext(Dispatchers.IO) {
+        val res = deviceTransport.completeDailySchedule()
         res
     }
 

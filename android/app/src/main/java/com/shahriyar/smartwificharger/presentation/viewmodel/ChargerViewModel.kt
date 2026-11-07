@@ -617,6 +617,27 @@ class ChargerViewModel(
         }
     }
 
+    fun markDailyScheduleCompleted() {
+        viewModelScope.launch {
+            val res = repository.completeDailySchedule()
+            showMessage(if (res.success) "Today's schedule marked COMPLETED." else "Mark complete command sent")
+            try {
+                val bundle = repository.refreshData()
+                _uiState.update { current ->
+                    current.copy(
+                        telemetry = bundle.telemetry,
+                        billing = bundle.billing,
+                        config = bundle.config,
+                        fault = bundle.fault,
+                        connectionMode = bundle.connectionMode,
+                        activeBaseUrl = bundle.activeBaseUrl,
+                        isMcuOnline = bundle.isMcuOnline
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     fun syncWeather(
         lat: Double = prefs.weatherLat.toDouble(),
         lon: Double = prefs.weatherLon.toDouble(),

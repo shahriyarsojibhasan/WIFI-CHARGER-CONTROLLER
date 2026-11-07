@@ -175,8 +175,16 @@ class ConnectionManager(
         }
     }
 
+    private val savedStartupIp: String = try {
+        val p = AppPreferences.getInstance(context)
+        val s = p.lastKnownLanIp.ifBlank { p.localEspIp }
+        if (s.isNotBlank() && !s.contains(".local")) normalizeUrl(s) else normalizeUrl(configuredLocalIp)
+    } catch (_: Exception) {
+        normalizeUrl(configuredLocalIp)
+    }
+
     private var directApApi: EspLocalApi = EspApiClientFactory.create("http://192.168.4.1")
-    private var localLanApi: EspLocalApi = EspApiClientFactory.create(normalizeUrl(configuredLocalIp))
+    private var localLanApi: EspLocalApi = EspApiClientFactory.create(savedStartupIp)
 
     private val fbService: FirebaseChargerService = firebaseService ?: FirebaseChargerService("https://$firebaseHost", deviceId)
 
@@ -220,11 +228,13 @@ class ConnectionManager(
         if (clean != "http://0.0.0.0" && clean != learnedLanIp) {
             learnedLanIp = clean
             try {
-                AppPreferences.getInstance(context).lastKnownLanIp = clean
+                val p = AppPreferences.getInstance(context)
+                p.lastKnownLanIp = clean
+                p.localEspIp = clean
             } catch (_: Exception) {}
             localLanApi = EspApiClientFactory.create(clean, network = activeWifiNetwork)
             logDecision(_connectionState.value, _connectionState.value, "Learned ESP LAN IP from Cloud: $clean", 0)
-            if (_connectionState.value == ConnectionMode.FIREBASE_WAN || _connectionState.value == ConnectionMode.OFFLINE) {
+            if (_connectionState.value == ConnectionMode.FIREBASE_WAN || _connectionState.value == ConnectionMode.OFFLINE || _connectionState.value == ConnectionMode.CONNECTING) {
                 scope.launch { probeConnection() }
             }
         }
@@ -262,12 +272,16 @@ class ConnectionManager(
 
                 val apEndpoint = dynamicGatewayIp?.let { "http://$it" } ?: "http://192.168.4.1"
                 directApApi = EspApiClientFactory.create(apEndpoint, network = network)
-                localLanApi = EspApiClientFactory.create(normalizeUrl(configuredLocalIp), network = network)
 
-                // Reset failure hysteresis on new network — fresh discovery needed
+                // Reset failure hysteresis on new network
                 localFailureCount = 0
-                val savedLanIp = try { AppPreferences.getInstance(context).lastKnownLanIp } catch (_: Exception) { "" }
+                val savedLanIp = try {
+                    val p = AppPreferences.getInstance(context)
+                    p.lastKnownLanIp.ifBlank { p.localEspIp }
+                } catch (_: Exception) { "" }
                 learnedLanIp = if (savedLanIp.isNotBlank()) normalizeUrl(savedLanIp) else null
+                val lanEndpoint = learnedLanIp ?: normalizeUrl(configuredLocalIp)
+                localLanApi = EspApiClientFactory.create(lanEndpoint, network = network)
 
                 evaluateProcessBinding(network)
                 updateDiagnosticsData()
@@ -456,23 +470,22 @@ class ConnectionManager(
         }
 
         // ── Priority 2: Check LOCAL LAN (Router Wi-Fi) ──
-        // Step A: FAST PATH — Check learned/cached numeric IP first (e.g. http://192.168.1.113)
+        // Step A: FAST PATH — Check last known working IP first for instant LAN connection
         val prefs = try { AppPreferences.getInstance(context) } catch (_: Exception) { null }
-        val savedLanIp = prefs?.lastKnownLanIp ?: ""
-        val savedSsid = prefs?.lastKnownSsid ?: ""
-        val ssidChanged = currentSsid.isNotBlank() && savedSsid.isNotBlank() && currentSsid != savedSsid && !currentSsid.contains("SMART", ignoreCase = true)
-        if (ssidChanged) {
-            learnedLanIp = null
-            try { prefs?.lastKnownLanIp = "" } catch (_: Exception) {}
-        }
-        val effectiveSavedLanIp = if (ssidChanged) "" else savedLanIp
-        val isHomeSsid = (currentSsid.isNotBlank() && currentSsid == savedSsid) || currentSsid == "MESSI~GOAT"
+        val savedLanIp = prefs?.lastKnownLanIp?.takeIf { it.isNotBlank() }
+            ?: prefs?.localEspIp?.takeIf { it.isNotBlank() }
+            ?: ""
+
+        // Preserve IP across app restarts / SSID changes — never erase!
         val knownEndpoints = listOfNotNull(
-            if (!ssidChanged) learnedLanIp?.let { normalizeUrl(it) } else null,
-            if (effectiveSavedLanIp.isNotBlank()) normalizeUrl(effectiveSavedLanIp) else null,
-            if (currentAndroidIp?.startsWith("192.168.1.") == true || isHomeSsid) "http://192.168.1.113" else null,
-            if (currentAndroidIp?.startsWith("192.168.0.") == true) "http://192.168.0.113" else null,
-            if (!configuredLocalIp.contains(".local") && !ssidChanged) normalizeUrl(configuredLocalIp) else null
+            if (savedLanIp.isNotBlank()) normalizeUrl(savedLanIp) else null,
+            learnedLanIp?.let { normalizeUrl(it) },
+            if (!configuredLocalIp.contains(".local")) normalizeUrl(configuredLocalIp) else null,
+            if (currentAndroidIp?.startsWith("192.168.0.") == true) "http://192.168.0.101" else null,
+            if (currentAndroidIp?.startsWith("192.168.1.") == true) "http://192.168.1.113" else null,
+            "http://192.168.0.101",
+            "http://192.168.1.113",
+            "http://192.168.0.113"
         ).distinct().filter { !it.contains("192.168.4.1") && !it.contains("192.168.0.1") && !it.contains("192.168.1.1") }
 
         for (endpoint in knownEndpoints) {
@@ -488,6 +501,7 @@ class ConnectionManager(
                     learnedLanIp = endpoint
                     try {
                         prefs?.lastKnownLanIp = endpoint
+                        prefs?.localEspIp = endpoint
                         if (currentSsid.isNotBlank() && currentSsid != "DISCONNECTED" && !currentSsid.contains("SMART", ignoreCase = true)) {
                             prefs?.lastKnownSsid = currentSsid
                         }

@@ -494,6 +494,29 @@ class FirebaseChargerService(
         sendPatch(cmdUrl, cmdPayload.toString())
     }
 
+    suspend fun completeDailySchedule(): Boolean = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        val cmdPayload = JsonObject().apply {
+            addProperty("commandId", "CMD-SCHED-COMP-$now")
+            addProperty("action", "COMPLETE_SCHEDULE")
+            addProperty("source", "FIREBASE_WAN")
+            addProperty("targetDeviceId", deviceId)
+            addProperty("complete_schedule", true)
+            addProperty("createdAt", now)
+            addProperty("expiresAt", now + 60000L)
+            addProperty("status", "PENDING")
+        }
+        val schedStateDone = JsonObject().apply {
+            addProperty("scheduleTodayCompleted", true)
+            addProperty("scheduleCompensating", false)
+            addProperty("scheduleTodayStatus", "COMPLETED")
+        }
+        val cmdUrl = "$databaseUrl/smartChargers/$deviceId/commands.json"
+        val stateUrl = "$databaseUrl/smartChargers/$deviceId/state.json"
+        sendPatch(stateUrl, schedStateDone.toString())
+        sendPatch(cmdUrl, cmdPayload.toString())
+    }
+
     suspend fun sendRelayCommand(turnOn: Boolean, commandId: String = "CMD-${System.currentTimeMillis()}"): Boolean = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val payload = JsonObject().apply {

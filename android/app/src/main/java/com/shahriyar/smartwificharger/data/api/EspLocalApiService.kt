@@ -335,6 +335,9 @@ interface EspLocalApi {
     @POST("/api/v1/schedule/reset")
     suspend fun resetSchedule(): retrofit2.Response<com.shahriyar.smartwificharger.data.api.SimpleStatusDto>
 
+    @POST("/api/v1/schedule/complete")
+    suspend fun completeSchedule(): retrofit2.Response<com.shahriyar.smartwificharger.data.api.SimpleStatusDto>
+
     @GET("/api/scan_wifi")
     suspend fun scanWifi(): Response<List<WifiNetworkDto>>
 

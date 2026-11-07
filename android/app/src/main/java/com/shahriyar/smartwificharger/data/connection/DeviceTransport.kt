@@ -45,6 +45,7 @@ interface DeviceTransport {
     suspend fun rebootDevice(type: String): DeviceCommandResult
     suspend fun resetBillingStats(): DeviceCommandResult
     suspend fun resetDailySchedule(): DeviceCommandResult
+    suspend fun completeDailySchedule(): DeviceCommandResult
     suspend fun syncWeather(isCloudy: Boolean): DeviceCommandResult
     suspend fun setWeatherMode(weatherMode: String): DeviceCommandResult
     suspend fun fetchStatus(): StatusResponse?
@@ -224,6 +225,16 @@ class DirectApTransport(
         val api = getApi() ?: return@withContext DeviceCommandResult(false, "", mode, ack = "FAILED")
         try {
             val res = api.resetSchedule()
+            DeviceCommandResult(res.isSuccessful, "", mode, ack = if (res.isSuccessful) "EXECUTED" else "FAILED")
+        } catch (e: Exception) {
+            DeviceCommandResult(false, "", mode, ack = "FAILED", message = e.message)
+        }
+    }
+
+    override suspend fun completeDailySchedule(): DeviceCommandResult = withContext(Dispatchers.IO) {
+        val api = getApi() ?: return@withContext DeviceCommandResult(false, "", mode, ack = "FAILED")
+        try {
+            val res = api.completeSchedule()
             DeviceCommandResult(res.isSuccessful, "", mode, ack = if (res.isSuccessful) "EXECUTED" else "FAILED")
         } catch (e: Exception) {
             DeviceCommandResult(false, "", mode, ack = "FAILED", message = e.message)
@@ -466,6 +477,16 @@ class LocalLanTransport(
         }
     }
 
+    override suspend fun completeDailySchedule(): DeviceCommandResult = withContext(Dispatchers.IO) {
+        val api = getApi() ?: return@withContext DeviceCommandResult(false, "", mode, ack = "FAILED")
+        try {
+            val res = api.completeSchedule()
+            DeviceCommandResult(res.isSuccessful, "", mode, ack = if (res.isSuccessful) "EXECUTED" else "FAILED")
+        } catch (e: Exception) {
+            DeviceCommandResult(false, "", mode, ack = "FAILED", message = e.message)
+        }
+    }
+
     override suspend fun rebootDevice(type: String): DeviceCommandResult = withContext(Dispatchers.IO) {
         val api = getApi() ?: return@withContext DeviceCommandResult(false, "", mode, ack = "FAILED")
         try {
@@ -624,6 +645,15 @@ class FirebaseWanTransport(
         }
     }
 
+    override suspend fun completeDailySchedule(): DeviceCommandResult = withContext(Dispatchers.IO) {
+        try {
+            val ok = firebaseService.completeDailySchedule()
+            DeviceCommandResult(ok, "", mode, ack = if (ok) "EXECUTED" else "FAILED")
+        } catch (e: Exception) {
+            DeviceCommandResult(false, "", mode, ack = "FAILED", message = e.message)
+        }
+    }
+
     override suspend fun syncWeather(isCloudy: Boolean): DeviceCommandResult = withContext(Dispatchers.IO) {
         val ok = firebaseService.syncCloudyWeather(isCloudy)
         DeviceCommandResult(ok, "", mode)
@@ -735,6 +765,10 @@ class OfflineTransport(
     }
 
     override suspend fun resetDailySchedule(): DeviceCommandResult = withContext(Dispatchers.IO) {
+        DeviceCommandResult(false, "", mode, ack = "OFFLINE")
+    }
+
+    override suspend fun completeDailySchedule(): DeviceCommandResult = withContext(Dispatchers.IO) {
         DeviceCommandResult(false, "", mode, ack = "OFFLINE")
     }
 

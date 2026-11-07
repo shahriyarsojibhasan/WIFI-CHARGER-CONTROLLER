@@ -78,6 +78,7 @@ fun SchedulerScreen(
     onSaveConfig: (ChargerConfig) -> Unit,
     onSaveSchedule: ((startH: Int, startM: Int, stopH: Int, stopM: Int, enabled: Boolean, daysBitmask: Int) -> Unit)? = null,
     onResetSchedule: (() -> Unit)? = null,
+    onMarkScheduleComplete: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     // 12-Hour format conversion helpers
@@ -595,8 +596,35 @@ fun SchedulerScreen(
             }
         }
 
-        if (onResetSchedule != null) {
+        if (onMarkScheduleComplete != null) {
             Spacer(modifier = Modifier.height(14.dp))
+            OutlinedButton(
+                onClick = onMarkScheduleComplete,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(14.dp),
+                border = BorderStroke(1.dp, ElectricGreen.copy(alpha = 0.6f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricGreen)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = null,
+                    tint = ElectricGreen,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isBn) "আজকের শিডিউল সম্পন্ন চিহ্নিত করুন (Mark Complete)" else "Mark Today's Schedule Complete",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = ElectricGreen
+                )
+            }
+        }
+
+        if (onResetSchedule != null) {
+            Spacer(modifier = Modifier.height(10.dp))
             OutlinedButton(
                 onClick = onResetSchedule,
                 modifier = Modifier

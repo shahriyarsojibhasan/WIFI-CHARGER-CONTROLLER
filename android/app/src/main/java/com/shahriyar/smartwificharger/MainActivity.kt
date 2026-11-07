@@ -716,6 +716,7 @@ fun MainAppScaffold(viewModel: ChargerViewModel) {
                         viewModel.saveSchedule(startH, startM, stopH, stopM, enabled, tz, days)
                     },
                     onResetSchedule = { viewModel.resetDailySchedule() },
+                    onMarkScheduleComplete = { viewModel.markDailyScheduleCompleted() },
                     modifier = modifier
                 )
                 Screen.Devices -> DevicesScreen(
